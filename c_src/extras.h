@@ -32,6 +32,7 @@ int retError(Myerl *erl, char *error);
 
 int sendHashTuplePid(Myerl *erl, robj *key, robj *val);
 int sendListTuplePid(Myerl *erl, robj *key, robj *val);
+int sendZsetTuplePid(Myerl *erl, robj *key, robj *val);
 
 ERL_NIF_TERM mk_error(ErlNifEnv* env, const char *msg);
 ERL_NIF_TERM mk_atom(ErlNifEnv* env, const char *atom);

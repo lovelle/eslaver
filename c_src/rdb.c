@@ -258,8 +258,7 @@ int rdbLoad(FILE *debug, Myerl *erl, char *filename) {
                     //sendSetTuplePid(erl, key, val);
                 break;
             case REDIS_RDB_TYPE_ZSET:
-                    ;
-                    //sendZsetTuplePid(erl, key, val);
+                    if (sendZsetTuplePid(erl, key, val)) return REDIS_ERR;
                 break;
             case REDIS_RDB_TYPE_HASH:
                     if (sendHashTuplePid(erl, key, val)) return REDIS_ERR;
@@ -267,8 +266,8 @@ int rdbLoad(FILE *debug, Myerl *erl, char *filename) {
             default: erl->error = "Unknown rdb object type"; return REDIS_ERR;
         }
 
-//        /* Set the expire time if needed */
-//        if (expiretime != -1) setExpire(db,key,expiretime);
+        /* Set the expire time if needed */
+        //if (expiretime != -1) setExpire(db,key,expiretime);
         decrRefCount(key);
     }
     /* Verify the checksum if RDB version is >= 5 */

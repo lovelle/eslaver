@@ -414,6 +414,16 @@ int sendListPid(Myerl *erl, robj *key, List *lst) {
     return _sendPid(erl, elist);
 }
 
+int sendZsetTuplePid(Myerl *erl, robj *key, robj *val) {
+    ERL_NIF_TERM zset;
+    zset = enif_make_tuple4(erl->env,
+        mk_atom(erl->env, SOURCE),
+        mk_atom(erl->env, "zset"),
+        mk_binary(erl->env, key->ptr),
+        mk_string(erl->env, "not_available"));
+    return _sendPid(erl, zset);
+}
+
 int sendStringTuplePid(Myerl *erl, robj *key, robj *val) {
     ERL_NIF_TERM string;
     string = enif_make_tuple4(erl->env,
