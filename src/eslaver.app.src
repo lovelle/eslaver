@@ -1,0 +1,19 @@
+{application, eslaver,
+ [{vsn, "1.0.0"},
+  {description, "eslaver"},
+  {modules, [eslaver, erlcount_sup, erlcount_lib,
+             erlcount_dispatch, erlcount_counter]},
+  {applications, [stdlib, kernel]},
+  {registered, [eslaver]},
+  {mod, {eslaver, []}},
+  {env, [
+    {master, [
+        {node, "nodeA"},
+        {host, "127.0.0.1"},
+        {port, 6379}
+    ]},
+    {rdbcompression, yes},
+    {rdbchecksum, yes},
+    {dbfilename, "dump.rdb"}
+  ]}
+ ]}.
