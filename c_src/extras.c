@@ -390,7 +390,7 @@ int sendHashPid(Myerl *erl, robj *key, HashDict *hd, int iter) {
     return _sendPid(erl, hash);
 }
 
-int sendListPid(Myerl *erl, robj *key, List *lqst) {
+int sendListPid(Myerl *erl, robj *key, List *lst) {
     ERL_NIF_TERM elist, list, elem;
     long elems = lst->elems;
     int i;
@@ -398,7 +398,7 @@ int sendListPid(Myerl *erl, robj *key, List *lqst) {
     /* Initialize list of key and values */
     list = enif_make_list(erl->env, 0);
 
-    for (i = 0; i < eqlems; ++i) {
+    for (i = 0; i < elems; ++i) {
         if (lst[i].type == ERL_INT) {
             elem = mk_int(erl->env, lst[i].data);
         } else if (lst[i].type == ERL_STR) {
