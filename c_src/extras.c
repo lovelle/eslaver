@@ -301,16 +301,12 @@ int sendListTuplePid(Myerl *erl, robj *key, robj *val) {
             ziplistGet(p,&vstr,&vlen,&vlong);
 
             if (vstr) {
-                /*if (realloc(lst->data, sizeof(char*)*vlen) == NULL)
-                    return retError(erl, "Cannot reallocate list element");
-                */
                 lst[rangelen].data = sdsnewlen(vstr, vlen);
+                lst[rangelen].type = ERL_STR;
             } else {
                 len = ll2string(buf,64,vlong);
-                /*if (realloc(lst->data, sizeof(char*)*len) == NULL)
-                    return retError(erl, "Cannot reallocate list element");
-                */
                 lst[rangelen].data = sdsnewlen(buf, len);
+                lst[rangelen].type = ERL_INT;
             }
             p = ziplistNext(val->ptr,p);
         }
@@ -340,11 +336,13 @@ int sendListTuplePid(Myerl *erl, robj *key, robj *val) {
 
 
 /*** custom ***/
-#define SOURCE "loading"
-
 int retError(Myerl *erl, char *error) {
     erl->error = error;
     return -1;
+}
+
+ERL_NIF_TERM mk_int(ErlNifEnv* env, const char *data) {
+    return enif_make_int64(env, atol(data));
 }
 
 ERL_NIF_TERM mk_string(ErlNifEnv* env, const char *data) {
@@ -392,16 +390,24 @@ int sendHashPid(Myerl *erl, robj *key, HashDict *hd, int iter) {
     return _sendPid(erl, hash);
 }
 
-int sendListPid(Myerl *erl, robj *key, List *lst) {
+int sendListPid(Myerl *erl, robj *key, List *lqst) {
     ERL_NIF_TERM elist, list, elem;
-    int i;
     long elems = lst->elems;
+    int i;
 
     /* Initialize list of key and values */
     list = enif_make_list(erl->env, 0);
 
-    for (i = 0; i < elems; ++i) {
-        elem = mk_string(erl->env, lst[i].data);
+    for (i = 0; i < eqlems; ++i) {
+        if (lst[i].type == ERL_INT) {
+            elem = mk_int(erl->env, lst[i].data);
+        } else if (lst[i].type == ERL_STR) {
+            //TODO: mk_string ?
+            elem = mk_binary(erl->env, lst[i].data);
+        } else {
+            return retError(erl, "invalid data type list element");
+        }
+
         list = enif_make_list_cell(erl->env, elem, list);
         sdsfree(lst[i].data);
         lst->elems--;

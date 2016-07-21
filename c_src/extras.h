@@ -2,6 +2,9 @@
 //#include "erl_nif_compat.h"
 //#include "nif_util.h"
 
+#define SOURCE "loading"
+#define ERL_STR 0
+#define ERL_INT 1
 
 typedef struct Myerl {
     ErlNifEnv* env;
@@ -18,6 +21,7 @@ typedef struct HashDict {
 typedef struct List {
     char *data;
     long elems;
+    int type;
 } List;
 
 long long ustime(void);
