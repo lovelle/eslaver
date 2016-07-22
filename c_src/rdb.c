@@ -26,11 +26,6 @@ time_t rdbLoadTime(rio *rdb) {
     return (time_t)t32;
 }
 
-//int rdbSaveMillisecondTime(rio *rdb, long long t) {
-//    int64_t t64 = (int64_t) t;
-//    return rdbWriteRaw(rdb,&t64,8);
-//}
-
 long long rdbLoadMillisecondTime(rio *rdb) {
     int64_t t64;
     if (rioRead(rdb,&t64,8) == 0) return -1;
@@ -722,24 +717,25 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, FILE *debug) {
     }
     return o;
 }
+
 /****************/
 static ERL_NIF_TERM rdb2(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+    int i, usemark = 0, ret = -1;
+    FILE *fp;
     ErlNifPid pid;
     ErlNifBinary bin;
-    Myerl *erl = enif_alloc(sizeof(Myerl));    
-    unsigned int ret = -1;
-    int i;
-    char *filename = "/tmp/master/dump.rdb";
-    FILE *fp;
-    FILE *debug = fopen("/tmp/debug.txt", "a");
+    Myerl *erl = enif_alloc(sizeof(Myerl));
+    char *filename = "/tmp/master/dump2.rdb";
 
+    FILE *debug = fopen("/tmp/debug.txt", "a");
     assert(erl != NULL);
 
     /* argv[0] -> Pid && argv[1] -> Binary */
     if(argc != 2) return enif_make_badarg(env);
 
     /* The Pid received must be a valid Pid */
-    if(!enif_is_pid(env, argv[0])) return mk_error(env, "first arg is not a pid");
+    if(!enif_is_pid(env, argv[0]))
+        return mk_error(env, "first arg is not a pid");
 
     /* Pid must be local */
     if(!enif_get_local_pid(env, argv[0], &pid))
@@ -754,20 +750,24 @@ static ERL_NIF_TERM rdb2(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     erl->msg_env = enif_alloc_env();
 
     if(erl->msg_env == NULL)
-        return mk_error(env, "environ_alloc_error");
+        return mk_error(env, "cannot allocate environ");
 
-    //enif_alloc_binary(bin.size, &outbin);
-    
+    if ((fp = fopen(filename, "w")) == NULL)
+        return mk_error(env, "cannot create new rdb file");
+
+    /* Write received binary as rdb into file */
     for (i = 0; i < bin.size; i++) {
-        //outbin.data[i] = bin.data[i];
+        if (bin.data[i] == '\n' && !usemark) {usemark++; continue;}
+        if (!usemark) continue;
+        fwrite(&bin.data[i], sizeof(bin.data[i]), 1, fp);
     }
+    fclose(fp);
 
     fprintf(debug, "-Starting-\n");
     fprintf(debug, "OK: Performing starting 'rdbLoad'\n");
     ret = rdbLoad(debug, erl, filename);
     fprintf(debug, "OK: Performing finished 'rdbLoad' return %d\n", ret);
 
-    //FIXME
     if (ret != ESLAVER_OK) return mk_error(env, erl->error);
 
     /* Send EOF */
