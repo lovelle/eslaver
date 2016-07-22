@@ -162,7 +162,6 @@ int rdbLoad(FILE *debug, Myerl *erl, char *filename) {
     if ((fp = fopen(filename,"r")) == NULL) return REDIS_ERR;
 
     rioInitWithFile(&rdb,fp);
-//    rioInitWithBuffer(&rdb, sdsnew(bulk));
 
     if (rioRead(&rdb,buf,9) == 0) goto eoferr;
     buf[9] = '\0';
@@ -234,7 +233,6 @@ int rdbLoad(FILE *debug, Myerl *erl, char *filename) {
          * received from the master. In the latter case, the master is
          * responsible for key expiry. If we would expire keys here, the
          * snapshot taken by the master may not be reflected on the slave. */
-        //if (server.masterhost == NULL && expiretime != -1 && expiretime < now) {
         if (expiretime != -1 && expiretime < now) {
             decrRefCount(key);
             decrRefCount(val);
@@ -299,9 +297,6 @@ robj *createObject(int type, void *ptr) {
     o->encoding = REDIS_ENCODING_RAW;
     o->ptr = ptr;
     o->refcount = 1;
-
-    /* Set the LRU to the current lruclock (minutes resolution). */
-    //o->lru = LRU_CLOCK();
     return o;
 }
 
@@ -322,8 +317,6 @@ robj *createEmbeddedStringObject(char *ptr, size_t len) {
     o->encoding = REDIS_ENCODING_EMBSTR;
     o->ptr = sh+1;
     o->refcount = 1;
-    //o->lru = LRU_CLOCK();
-
     sh->len = len;
     sh->free = 0;
     if (ptr) {
@@ -390,7 +383,7 @@ void decrRefCount(robj *o) {
         case REDIS_HASH: zfree(o); break;
         default: printf("Unknown object type"); break;
         }
-        //BUG!!
+        //segfault!!
         //zfree(o);
     } else {
         o->refcount--;
