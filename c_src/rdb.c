@@ -4,10 +4,11 @@
 
 #include "lzf.h"
 #include "sds.h"
-#include "zmalloc.h"
 #include "rdb.h"
+#include "util.h"
 #include "extras.h"
 #include "ziplist.h"
+#include "zmalloc.h"
 
 
 /* Load a "type" in RDB format, that is a one byte unsigned integer.
@@ -572,7 +573,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, FILE *debug) {
 //                zsetConvert(o,REDIS_ENCODING_ZIPLIST);
     } else if (rdbtype == REDIS_RDB_TYPE_HASH) {
         size_t len;
-        int ret;
+//        int ret;
 
         len = rdbLoadLen(rdb, NULL);
         if (len == REDIS_RDB_LENERR) return NULL;
@@ -728,21 +729,25 @@ static ERL_NIF_TERM rdb2(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     Myerl *erl = enif_alloc(sizeof(Myerl));    
     unsigned int ret = -1;
     int i;
-    //char *filename = "/tmp/new_file.rdb";
     char *filename = "/tmp/master/dump.rdb";
     FILE *fp;
     FILE *debug = fopen("/tmp/debug.txt", "a");
 
-
     assert(erl != NULL);
 
+    /* argv[0] -> Pid && argv[1] -> Binary */
     if(argc != 2) return enif_make_badarg(env);
-    if(!enif_is_pid(env, argv[0])) return mk_error(env, "not_a_pid");
-    if(!enif_get_local_pid(env, argv[0], &pid))
-        return mk_error(env, "not_a_local_pid");
 
+    /* The Pid received must be a valid Pid */
+    if(!enif_is_pid(env, argv[0])) return mk_error(env, "first arg is not a pid");
+
+    /* Pid must be local */
+    if(!enif_get_local_pid(env, argv[0], &pid))
+        return mk_error(env, "pid is not local");
+
+    /* Second arg must be binary */
     if (!enif_inspect_binary(env, argv[1], &bin))
-        return enif_make_badarg(env);
+        return mk_error(env, "invalid binary");
 
     erl->env = env;
     erl->pid = pid;
@@ -763,7 +768,7 @@ static ERL_NIF_TERM rdb2(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     fprintf(debug, "OK: Performing finished 'rdbLoad' return %d\n", ret);
 
     //FIXME
-    if (ret != 0) return mk_error(env, erl->error);
+    if (ret != ESLAVER_OK) return mk_error(env, erl->error);
 
     /* Send EOF */
     if (sendEofPid(erl)) return mk_error(env, erl->error);

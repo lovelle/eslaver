@@ -3,6 +3,8 @@
 //#include "nif_util.h"
 
 #define SOURCE "loading"
+#define ESLAVER_OK    0
+#define ESLAVER_ERR   -1
 #define ERL_STR 0
 #define ERL_INT 1
 

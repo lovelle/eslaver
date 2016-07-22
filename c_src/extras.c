@@ -338,7 +338,7 @@ int sendListTuplePid(Myerl *erl, robj *key, robj *val) {
 /*** custom ***/
 int retError(Myerl *erl, char *error) {
     erl->error = error;
-    return -1;
+    return ESLAVER_ERR;
 }
 
 ERL_NIF_TERM mk_int(ErlNifEnv* env, const char *data) {
@@ -402,8 +402,7 @@ int sendListPid(Myerl *erl, robj *key, List *lst) {
         if (lst[i].type == ERL_INT) {
             elem = mk_int(erl->env, lst[i].data);
         } else if (lst[i].type == ERL_STR) {
-            //TODO: mk_string ?
-            elem = mk_binary(erl->env, lst[i].data);
+            elem = mk_binary(erl->env, lst[i].data); //TODO: mk_string ?
         } else {
             return retError(erl, "invalid data type list element");
         }
@@ -453,8 +452,8 @@ int _sendPid(Myerl *erl, ERL_NIF_TERM data) {
     if(!enif_send(erl->env, &erl->pid, erl->msg_env, data)) {
         enif_free(erl->msg_env);
         erl->error = "error_sending_term";
-        return -1;
+        return ESLAVER_ERR;
     }
-    return 0;
+    return ESLAVER_OK;
 }
 /*** custom ***/
