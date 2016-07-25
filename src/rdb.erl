@@ -2,11 +2,9 @@
 -on_load(init/0).
 
 -export([
-    rdb/1, rdb/0,
-    rdb2/2,
-    double/1,
-    triple_defer/1,
-    triple_direct/1
+    rdb/0,
+    rdb/1,
+    rdb2/2
 ]).
 
 
@@ -25,27 +23,15 @@ init() ->
     erlang:load_nif(Bin, 0).
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 rdb(_N) ->
     not_loaded(?LINE).
+
 rdb() ->
     not_loaded(?LINE).
 
 rdb2(_N, _D) ->
     not_loaded(?LINE).
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-double(_N) ->
-    not_loaded(?LINE).
-
-
-triple_defer(_N) ->
-    not_loaded(?LINE).
-
-
-triple_direct(_N) ->
-    not_loaded(?LINE).
-
 
 not_loaded(Line) ->
     exit({not_loaded, [{module, ?MODULE}, {line, Line}]}).
+
