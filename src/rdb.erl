@@ -2,9 +2,8 @@
 -on_load(init/0).
 
 -export([
-    rdb/0,
-    rdb/1,
-    rdb2/2
+    save/1,
+    load/1
 ]).
 
 
@@ -23,15 +22,11 @@ init() ->
     erlang:load_nif(Bin, 0).
 
 
-rdb(_N) ->
+load(_N) ->
     not_loaded(?LINE).
 
-rdb() ->
-    not_loaded(?LINE).
-
-rdb2(_N, _D) ->
+save(_N) ->
     not_loaded(?LINE).
 
 not_loaded(Line) ->
     exit({not_loaded, [{module, ?MODULE}, {line, Line}]}).
-

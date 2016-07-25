@@ -712,38 +712,18 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, FILE *debug) {
 }
 
 /****************/
-static ERL_NIF_TERM rdb2(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
-    int i, usemark = 0, ret = -1;
+static ERL_NIF_TERM save(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     FILE *fp;
-    ErlNifPid pid;
     ErlNifBinary bin;
-    Myerl *erl = enif_alloc(sizeof(Myerl));
+    int i, usemark = 0;
     char *filename = "/tmp/master/dump2.rdb";
 
-    FILE *debug = fopen("/tmp/debug.txt", "a");
-    assert(erl != NULL);
+    /* argv[0] -> Binary */
+    if(argc != 1) return enif_make_badarg(env);
 
-    /* argv[0] -> Pid && argv[1] -> Binary */
-    if(argc != 2) return enif_make_badarg(env);
-
-    /* The Pid received must be a valid Pid */
-    if(!enif_is_pid(env, argv[0]))
-        return mk_error(env, "first arg is not a pid");
-
-    /* Pid must be local */
-    if(!enif_get_local_pid(env, argv[0], &pid))
-        return mk_error(env, "pid is not local");
-
-    /* Second arg must be binary */
-    if (!enif_inspect_binary(env, argv[1], &bin))
+    /* Arg must be binary */
+    if (!enif_inspect_binary(env, argv[0], &bin))
         return mk_error(env, "invalid binary");
-
-    erl->env = env;
-    erl->pid = pid;
-    erl->msg_env = enif_alloc_env();
-
-    if(erl->msg_env == NULL)
-        return mk_error(env, "cannot allocate environ");
 
     if ((fp = fopen(filename, "w")) == NULL)
         return mk_error(env, "cannot create new rdb file");
@@ -755,6 +735,43 @@ static ERL_NIF_TERM rdb2(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
         fwrite(&bin.data[i], sizeof(bin.data[i]), 1, fp);
     }
     fclose(fp);
+
+    if (i != bin.size)
+        return mk_error(env, "rdb file invalid save");
+
+    return mk_atom(env, "ok");
+}
+
+static ERL_NIF_TERM load(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+    FILE *fp;
+    ErlNifPid pid;
+    Myerl *erl = enif_alloc(sizeof(Myerl));
+    int ret = -1;
+    char *filename = "/tmp/master/dump2.rdb";
+
+    FILE *debug = fopen("/tmp/debug.txt", "a");
+    assert(erl != NULL);
+
+    /* argv[0] -> Pid */
+    if(argc != 1) return enif_make_badarg(env);
+
+    /* The Pid received must be a valid Pid */
+    if(!enif_is_pid(env, argv[0]))
+        return mk_error(env, "first arg is not a pid");
+
+    /* Pid must be local */
+    if(!enif_get_local_pid(env, argv[0], &pid))
+        return mk_error(env, "pid is not local");
+
+    erl->env = env;
+    erl->pid = pid;
+    erl->msg_env = enif_alloc_env();
+
+    if(erl->msg_env == NULL)
+        return mk_error(env, "cannot allocate environ");
+
+    if ((fp = fopen(filename,"r")) == NULL)
+        return mk_error(env, "rdb file not exist");;
 
     fprintf(debug, "-Starting-\n");
     fprintf(debug, "OK: Performing starting 'rdbLoad'\n");
@@ -774,7 +791,8 @@ static ERL_NIF_TERM rdb2(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
 
 
 static ErlNifFunc nif_funcs[] = {
-    {"rdb2", 2, rdb2}
+    {"load", 1, load},
+    {"save", 1, save}
 };
 
 
