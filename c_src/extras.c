@@ -451,9 +451,10 @@ int sendEofPid(Myerl *erl) {
 int _sendPid(Myerl *erl, ERL_NIF_TERM data) {
     if(!enif_send(erl->env, &erl->pid, erl->msg_env, data)) {
         enif_free(erl->msg_env);
-        erl->error = "error_sending_term";
+        erl->error = "error sending term";
         return ESLAVER_ERR;
     }
     return ESLAVER_OK;
 }
 /*** custom ***/
+
