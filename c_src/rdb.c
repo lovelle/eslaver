@@ -756,7 +756,7 @@ static ERL_NIF_TERM load(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     ErlNifPid pid;
     Myerl *erl;
     int ret = -1;
-    char *filename = "/tmp/master/dump2.rdb";
+    char *filename = "/tmp/master/dump.rdb";
 
     /* argv[0] -> Pid */
     if(argc != 1) return enif_make_badarg(env);
@@ -795,6 +795,7 @@ static ERL_NIF_TERM load(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
 
     write_log("-Finished-");
     enif_free_env(erl->msg_env);
+    enif_free(erl);
     return mk_atom(env, "ok");
 }
 
