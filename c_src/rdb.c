@@ -147,7 +147,7 @@ robj *rdbLoadEncodedStringObject(rio *rdb) {
     return rdbGenericLoadStringObject(rdb,1);
 }
 
-int rdbLoad(FILE *debug, Myerl *erl, char *filename) {
+int rdbLoad(Myerl *erl, char *filename) {
     uint32_t dbid;
     int type, rdbver;
 //    redisDb *db = server.db+0;
@@ -157,10 +157,7 @@ int rdbLoad(FILE *debug, Myerl *erl, char *filename) {
     FILE *fp;
     rio rdb;
 
-    fprintf(debug, "OK: rdbLoad: debug starting\n");
-
     if ((fp = fopen(filename,"r")) == NULL) return REDIS_ERR;
-
     rioInitWithFile(&rdb,fp);
 
     if (rioRead(&rdb,buf,9) == 0) goto eoferr;
@@ -219,14 +216,14 @@ int rdbLoad(FILE *debug, Myerl *erl, char *filename) {
         /* Read key */
         if ((key = rdbLoadStringObject(&rdb)) == NULL) goto eoferr;
         /* Read value */
-        if ((val = rdbLoadObject(type,&rdb, debug)) == NULL) goto eoferr;
+        if ((val = rdbLoadObject(type,&rdb)) == NULL) goto eoferr;
 
         if (expiretime != -1) {
-            fprintf(debug, "OK: val now is '%lld' \n", now);
-            fprintf(debug, "OK: val expire is '%lld' \n", expiretime);
+            //fprintf(debug, "OK: val now is '%lld' \n", now);
+            //fprintf(debug, "OK: val expire is '%lld' \n", expiretime);
         }
 
-        fprintf(debug, "OK: key name is '%s' type is '%d' \n", (char*)key->ptr, val->type);
+        //fprintf(debug, "OK: key name is '%s' type is '%d' \n", (char*)key->ptr, val->type);
 
         /* Check if the key already expired. This function is used when loading
          * an RDB file from disk, either at startup, or when an RDB was
@@ -282,7 +279,7 @@ int rdbLoad(FILE *debug, Myerl *erl, char *filename) {
     }
     */
 
-    fprintf(debug, "OK: rdbLoad: debug finished\n");
+    //fprintf(debug, "OK: rdbLoad: debug finished\n");
     return 0;
 
 eoferr: /* unexpected end of file is handled here with a fatal exit */
@@ -443,7 +440,7 @@ robj *getDecodedObject(robj *o) {
 
 /* Load a Redis object of the specified type from the specified file.
  * On success a newly allocated object is returned, otherwise NULL. */
-robj *rdbLoadObject(int rdbtype, rio *rdb, FILE *debug) {
+robj *rdbLoadObject(int rdbtype, rio *rdb) {
     robj *o, *ele, *dec;
     size_t len;
 //    unsigned int i;
@@ -585,8 +582,8 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, FILE *debug) {
             value = rdbLoadStringObject(rdb);
             if (value == NULL) return NULL;
 //            redisAssert(sdsEncodedObject(value));
-            fprintf(debug, "OK: key HASH field char is '%s' \n", (char*)field->ptr);
-            fprintf(debug, "OK: val HASH value char is '%s' \n", (char*)value->ptr);
+            //fprintf(debug, "OK: key HASH field char is '%s' \n", (char*)field->ptr);
+            //fprintf(debug, "OK: val HASH value char is '%s' \n", (char*)value->ptr);
 
             /* Add pair to ziplist */
             o->ptr = ziplistPush(o->ptr, field->ptr, sdslen(field->ptr), ZIPLIST_TAIL);
@@ -711,6 +708,18 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, FILE *debug) {
     return o;
 }
 
+int write_log(char *text) {
+    FILE *debug;
+
+    if ((debug = fopen("/tmp/debug.txt","a")) == NULL) {
+        printf("Cannot write log\n");
+        exit(1);
+    }
+    fprintf(debug, "%s\n", text);
+    fclose(debug);
+    return 0;
+}
+
 /****************/
 static ERL_NIF_TERM save(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     FILE *fp;
@@ -745,12 +754,9 @@ static ERL_NIF_TERM save(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
 static ERL_NIF_TERM load(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     FILE *fp;
     ErlNifPid pid;
-    Myerl *erl = enif_alloc(sizeof(Myerl));
+    Myerl *erl;
     int ret = -1;
     char *filename = "/tmp/master/dump2.rdb";
-
-    FILE *debug = fopen("/tmp/debug.txt", "a");
-    assert(erl != NULL);
 
     /* argv[0] -> Pid */
     if(argc != 1) return enif_make_badarg(env);
@@ -763,28 +769,31 @@ static ERL_NIF_TERM load(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     if(!enif_get_local_pid(env, argv[0], &pid))
         return mk_error(env, "pid is not local");
 
+    erl = enif_alloc(sizeof(Myerl));
     erl->env = env;
     erl->pid = pid;
     erl->msg_env = enif_alloc_env();
+
+    assert(erl != NULL);
 
     if(erl->msg_env == NULL)
         return mk_error(env, "cannot allocate environ");
 
     if ((fp = fopen(filename,"r")) == NULL)
-        return mk_error(env, "rdb file not exist");;
+        return mk_error(env, "rdb file not exist");
 
-    fprintf(debug, "-Starting-\n");
-    fprintf(debug, "OK: Performing starting 'rdbLoad'\n");
-    ret = rdbLoad(debug, erl, filename);
-    fprintf(debug, "OK: Performing finished 'rdbLoad' return %d\n", ret);
+    write_log("-Starting-");
+    write_log("OK: Performing starting 'rdbLoad'");
+    ret = rdbLoad(erl, filename);
+    write_log("OK: Performing finished 'rdbLoad' return");
 
+    if (erl->error == NULL) erl->error = "empty response or not valid";
     if (ret != ESLAVER_OK) return mk_error(env, erl->error);
 
     /* Send EOF */
     if (sendEofPid(erl)) return mk_error(env, erl->error);
 
-    fprintf(debug, "-Finished-\n");
-    fclose(debug);
+    write_log("-Finished-");
     enif_free_env(erl->msg_env);
     return mk_atom(env, "ok");
 }

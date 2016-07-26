@@ -234,7 +234,7 @@ hashTypeIterator *hashTypeInitIterator(robj *subject);
 
 /*** rdb.h ***/
 int rdbLoadObjectType(rio *rdb);
-robj *rdbLoadObject(int type, rio *rdb, FILE *debug);
+robj *rdbLoadObject(int type, rio *rdb);
 /*************/
 
 

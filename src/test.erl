@@ -3,9 +3,7 @@
 
 
 start() ->
-    Pid = spawn(?MODULE, server, [self()]),
-    client(Pid),
-    process(Pid).
+    spawn(?MODULE, server, [self()]).
 
 
 client(Pid) ->
@@ -19,24 +17,38 @@ client(Pid) ->
             115,101,116,25,25,0,0,0,22,0,0,0,4,0,0,3,111,110,101,5,242,2,3,117,
             110,111,5,242,255,255,25,120,128,60,72,122,38,183>>,
     rdb:save(Data),
-    rdb:load(Pid).
+    case rdb:load(Pid) of
+        {error, Msg} ->
+            io:format("error -> ~s", [Msg]),
+            Pid ! {self(), stop};
+        ok ->
+            ok;
+        Generic ->
+            io:format("generic -> '~p' ~n", [Generic])
+    end.
 
 
 process(Pid) ->
     receive
+        {_From, loading, list, <<Key/binary>>, [First|_]} ->
+            io:format("key list is '~p' first element -> '~p' ~n", [Key, First]),
+            process(Pid);
         {_From, loading, Type, <<Key/binary>>, _Rest} ->
-            io:format("key type '~s' is -> '~s' ~n", [Type, Key]),
+            io:format("key type '~s' key name -> '~s' ~n", [Type, Key]),
             process(Pid);
         {_From, eof} ->
-            io:format("eof ~n")
+            io:format("eof ~n");
+        Generic ->
+            io:format("fuck -> '~p'", [Generic])
     end.
 
 
 server(From) ->
     receive
+        {loading, eof} ->
+            From ! {self(), eof},
+            server(From);
         {loading, _Type, _Key, _Rest} ->
             From ! {self(), loading, _Type, _Key, _Rest},
-            server(From);
-        {loading, eof} ->
-            From ! {self(), eof}
+            server(From)
     end.
