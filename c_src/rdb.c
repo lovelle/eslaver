@@ -722,20 +722,24 @@ int write_log(char *text) {
 
 /****************/
 static ERL_NIF_TERM save(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
-    FILE *fp;
-    ErlNifBinary bin;
+    char filename[128];
     int i, usemark = 0;
-    char *filename = "/tmp/master/dump2.rdb";
+    ErlNifBinary bin;
+    FILE *fp;
 
-    /* argv[0] -> Binary */
-    if(argc != 1) return enif_make_badarg(env);
+    /* argv[0] -> Binary; argv[1] -> rdb_filename */
+    if(argc != 2) return enif_make_badarg(env);
 
     /* Arg must be binary */
     if (!enif_inspect_binary(env, argv[0], &bin))
         return mk_error(env, "invalid binary");
 
+    /* Should get filename */
+    if (!enif_get_string(env, argv[1], filename, sizeof(filename), ERL_NIF_LATIN1))
+        return mk_error(env, "invalid filename arg");
+
     if ((fp = fopen(filename, "w")) == NULL)
-        return mk_error(env, "cannot create new rdb file");
+        return mk_error(env, "cannot create rdb file");
 
     /* Write received binary as rdb into file */
     for (i = 0; i < bin.size; i++) {
@@ -752,18 +756,22 @@ static ERL_NIF_TERM save(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
 }
 
 static ERL_NIF_TERM load(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
-    FILE *fp;
+    int ret = -1;
+    char filename[128];
     ErlNifPid pid;
     Myerl *erl;
-    int ret = -1;
-    char *filename = "/tmp/master/dump.rdb";
+    FILE *fp;
 
-    /* argv[0] -> Pid */
-    if(argc != 1) return enif_make_badarg(env);
+    /* argv[0] -> Pid ; argv[1] -> rdb_filename */
+    if(argc != 2) return enif_make_badarg(env);
 
     /* The Pid received must be a valid Pid */
     if(!enif_is_pid(env, argv[0]))
         return mk_error(env, "first arg is not a pid");
+
+    /* Should get filename */
+    if (!enif_get_string(env, argv[1], filename, sizeof(filename), ERL_NIF_LATIN1))
+        return mk_error(env, "invalid filename arg");
 
     /* Pid must be local */
     if(!enif_get_local_pid(env, argv[0], &pid))
@@ -780,7 +788,7 @@ static ERL_NIF_TERM load(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
         return mk_error(env, "cannot allocate environ");
 
     if ((fp = fopen(filename,"r")) == NULL)
-        return mk_error(env, "rdb file not exist");
+        return mk_error(env, "cannot open rdb file");
 
     write_log("-Starting-");
     write_log("OK: Performing starting 'rdbLoad'");
@@ -801,8 +809,8 @@ static ERL_NIF_TERM load(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
 
 
 static ErlNifFunc nif_funcs[] = {
-    {"load", 1, load},
-    {"save", 1, save}
+    {"load", 2, load},
+    {"save", 2, save}
 };
 
 

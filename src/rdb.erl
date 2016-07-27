@@ -2,8 +2,8 @@
 -on_load(init/0).
 
 -export([
-    save/1,
-    load/1
+    save/2,
+    load/2
 ]).
 
 
@@ -22,10 +22,10 @@ init() ->
     erlang:load_nif(Bin, 0).
 
 
-load(_N) ->
+load(_Pid, _File) ->
     not_loaded(?LINE).
 
-save(_N) ->
+save(_Data, _File) ->
     not_loaded(?LINE).
 
 not_loaded(Line) ->
