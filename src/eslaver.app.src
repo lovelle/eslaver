@@ -1,6 +1,6 @@
 {application, eslaver,
  [{vsn, "1.0.0"},
-  {description, "Erlang redis slave replication client/server"},
+  {description, "Erlang slave redis replication client/server"},
   {applications, [stdlib, kernel]},
   {modules, [eslaver]},
   {registered, [eslaver, eslaver_sup, eslaver_server]},
