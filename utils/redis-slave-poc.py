@@ -9,18 +9,22 @@ BUFF=1024
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.connect((HOST, PORT))
 
+print "PING"
 s.send("PING\r\n")
 data = s.recv(BUFF)
 print(data)
 
+print "REPLCONF listening-port 6380"
 s.send("REPLCONF listening-port 6380\r\n")
 data = s.recv(BUFF)
 print(data)
 
+print "REPLCONF capa eof"
 s.send("REPLCONF capa eof\r\n")
 data = s.recv(BUFF)
 print(data)
 
+print "PSYNC ? -1"
 s.send("PSYNC ? -1\r\n")
 data = s.recv(BUFF)
 cmd, runid, offset = data.strip().split(" ")
