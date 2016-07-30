@@ -41,7 +41,7 @@ init([]) ->
     try initial() of
         {ok, Sock} ->
             gen_server:cast(self(), repl),
-            {ok, #state{socket=Sock, state=init}};
+            {ok, #state{socket=Sock, state=list}};
         {error, timeout} ->
             io:format("timeout"),
             {stop, timeout};
@@ -55,42 +55,28 @@ init([]) ->
 
 % load_rdb(self()), % load rdb file
 
+%% REPLCONF listening-port.
 %% The initial step, send the repl with our
 %% client tcp port over the socket.
-handle_cast(repl, S = #state{socket=Sock, state=init}) ->
+handle_cast(repl, S = #state{socket=Sock, state=list}) ->
     io:format("repl ~n"),
-    case repl(Sock) of
-        ok ->
-            ok = recv_ok(Sock), % FIXME PLEASE!!
-            gen_server:cast(self(), capa),
-            {noreply, S#state{state=sync}};
-        {error, Error} ->
-            {stop, socket_err, {S, Error}}
-    end;
+    handle_sock(repl(Sock), S);
+
+%% REPLCONF capa eof.
 %% Check wheter the server is able to do partial
 %% synchronization or just can handle whole sync.
-handle_cast(capa, S = #state{socket=Sock, state=sync}) ->
+handle_cast(capa, S = #state{socket=Sock, state=eof}) ->
     io:format("capa ~n"),
-    case capa(Sock) of
-        ok ->
-            case recv_ok(Sock) of
-                ok ->
-                    gen_server:cast(self(), psync),
-                    {noreply, S#state{state=load}}; % FIXME
-                {error, "invalid data received"} ->
-                    gen_server:cast(self(), sync),
-                    {noreply, S#state{state=load}}; % FIXME
-                {error, Error} ->
-                    {stop, socket_err, {S, Error}}
-            end;
-        {error, Error} ->
-            {stop, socket_err, {S, Error}}
-    end;
+    Type = handle_sock(capa(Sock), S), % BUG: take care of recv errors.
+    gen_server:cast(self(), Type),
+    {noreply, S#state{state=load}};
 
+%% PSYNC.
 handle_cast(psync, S = #state{socket=_Sock, state=load}) ->
     io:format("psync ~n"),
     {noreply, S};
 
+%% SYNC.
 handle_cast(sync, S = #state{socket=_Sock, state=load}) ->
     io:format("sync ~n"),
     {noreply, S};
@@ -98,16 +84,15 @@ handle_cast(sync, S = #state{socket=_Sock, state=load}) ->
 handle_cast(shutdown, State) ->
     io:format("Generic cast: *shutdown* while in '~p'~n",[State]),
     {stop, normal, State};
-%% generic
+%% Generic
 handle_cast(Msg, State) ->
     io:format("Generic cast: '~p' while in '~p'~n",[Msg, State]),
     {noreply, State}.
 
-
+%% Generic
 handle_call(Msg, From, State) ->
     io:format("Generic call: '~p' from '~p' while in '~p'~n",[Msg, From, State]),
     {reply, ok, State}.
-
 
 handle_info({loading, list, <<Key/binary>>, [FirstElem|_]}, State) ->
     io:format("key '~s' -> elem '~p' ~n", [Key, FirstElem]),
@@ -115,6 +100,7 @@ handle_info({loading, list, <<Key/binary>>, [FirstElem|_]}, State) ->
 handle_info({loading, eof}, State) ->
     io:format("rdb synchronization completed ~n"),
     {noreply, State};
+%%Generic
 handle_info(Msg, State) ->
     io:format("Generic info: '~p' '~p'~n",[Msg, State]),
     {noreply, State}.
@@ -138,6 +124,33 @@ terminate(Reason, State) ->
 % 3- start slave phase
 %    3.1 - [repl]
 %    3.2 - [capa] check if servr is psync compat with capa eof
+%    3.3 - [sync|psync]
+
+
+%% Handle the receiving data in socket depending
+%% in which state is.
+handle_sock(ok, S = #state{socket=Sock, state=list}) ->
+    case recv_ok(Sock) of
+        ok ->
+            gen_server:cast(self(), capa),
+            {noreply, S#state{state=eof}}; % Next state will be 'eof'
+        {error, Error} ->
+            {stop, socket_err, {S, Error}}
+    end;
+handle_sock(ok, S = #state{socket=Sock, state=eof}) ->
+    case recv_ok(Sock) of
+        ok ->
+            psync;
+        {error, "invalid data received"} -> %% Fix this for a better treatment
+            sync;
+        {error, Error} -> % BUG in here!!
+            {stop, socket_err, {S, Error}}
+    end;
+handle_sock({error, Error}, S) ->
+    {stop, socket_err, {S, Error}};
+handle_sock(_,_) ->
+    {stop, general, "general socket error"}.
+
 
 initial() ->
     Addr = {127,0,0,1},
@@ -170,7 +183,7 @@ recv_ok(Sock) ->
     inet:setopts(Sock, [{active,once}]),
     receive
         {tcp, Sock, <<"+OK", _/binary>>} ->
-            io:format("Hey received ok!~n"),
+            % io:format("Hey received ok!~n"),
             ok;
         {tcp, Sock, Data} ->
             io:format("invalid data received '~p' ~n", [Data]),
