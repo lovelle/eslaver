@@ -39,9 +39,9 @@ stop() ->
 init([]) ->
     process_flag(trap_exit, true),
     try initial() of
-        {ok, Socket} ->
+        {ok, Sock} ->
             gen_server:cast(self(), repl),
-            {ok, #state{socket=Socket, state=init}};
+            {ok, #state{socket=Sock, state=init}};
         {error, timeout} ->
             io:format("timeout"),
             {stop, timeout};
@@ -53,20 +53,46 @@ init([]) ->
             {stop, {Exception, Reason}}
     end.
 
-%% Start rdb slavery
 % load_rdb(self()), % load rdb file
-handle_cast(repl, S = #state{socket=Socket, state=init}) ->
-    case repl(Socket) of
+
+%% The initial step, send the repl with our
+%% client tcp port over the socket.
+handle_cast(repl, S = #state{socket=Sock, state=init}) ->
+    io:format("repl ~n"),
+    case repl(Sock) of
         ok ->
-            %% FIXME PLEASE!!
-            ok = recv_ok(Socket),
+            ok = recv_ok(Sock), % FIXME PLEASE!!
             gen_server:cast(self(), capa),
-            {noreply, S#state{state=next}};
+            {noreply, S#state{state=sync}};
         {error, Error} ->
             {stop, socket_err, {S, Error}}
     end;
-handle_cast(capa, S = #state{socket=Socket, state=next}) ->
-    io:format("next ~n"),
+%% Check wheter the server is able to do partial
+%% synchronization or just can handle whole sync.
+handle_cast(capa, S = #state{socket=Sock, state=sync}) ->
+    io:format("capa ~n"),
+    case capa(Sock) of
+        ok ->
+            case recv_ok(Sock) of
+                ok ->
+                    gen_server:cast(self(), psync),
+                    {noreply, S#state{state=load}}; % FIXME
+                {error, "invalid data received"} ->
+                    gen_server:cast(self(), sync),
+                    {noreply, S#state{state=load}}; % FIXME
+                {error, Error} ->
+                    {stop, socket_err, {S, Error}}
+            end;
+        {error, Error} ->
+            {stop, socket_err, {S, Error}}
+    end;
+
+handle_cast(psync, S = #state{socket=_Sock, state=load}) ->
+    io:format("psync ~n"),
+    {noreply, S};
+
+handle_cast(sync, S = #state{socket=_Sock, state=load}) ->
+    io:format("sync ~n"),
     {noreply, S};
 
 handle_cast(shutdown, State) ->
