@@ -73,8 +73,9 @@ handle_cast(capa, S = #state{socket=Sock, state=eof}) ->
     {noreply, S#state{state=load, mode=Type}};
 
 %% PSYNC.
-handle_cast(psync, S = #state{socket=_Sock, state=load}) ->
+handle_cast(psync, S = #state{socket=Sock, state=load}) ->
     io:format("psync ~n"),
+    handle_sock(psync(Sock, S#state.runid, S#state.offset), S),
     {noreply, S};
 
 %% SYNC.
@@ -94,7 +95,6 @@ handle_cast(shutdown, State) ->
 handle_cast(Msg, State) ->
     io:format("Generic cast: '~p' while in '~p'~n",[Msg, State]),
     {noreply, State}.
-
 
 %% Generic
 handle_call(Msg, From, State) ->
@@ -157,8 +157,8 @@ handle_sock(ok, S = #state{socket=Sock, state=eof}) ->
             {stop, socket_err, {S, Error}}
     end;
 %% Receive the payload from de synchronization command
-handle_sock(ok, S = #state{socket=Sock, state=load, mode=sync}) -> % Remove 'mode=sync'
-    io:format("getting payload ~n"),
+handle_sock(ok, S = #state{socket=Sock, state=load, mode=sync}) -> % Remove 'mode=sync' ?
+    io:format("getting payload sync ~n"),
     case recv_payload(Sock) of
         {stream, Bulk} ->
             gen_server:cast(self(), {load_rdb, Bulk}),
@@ -166,6 +166,11 @@ handle_sock(ok, S = #state{socket=Sock, state=load, mode=sync}) -> % Remove 'mod
         {error, Error} ->
             {stop, socket_err, {S, Error}}
     end;
+
+%% Receive the
+handle_sock(ok, S = #state{socket=_Sock, state=load, mode=psync}) -> % Remove 'mode=sync' ?
+    io:format("getting payload psync ~n"),
+    {noreply, S};
 
 handle_sock({error, Error}, S) ->
     {stop, socket_err, {S, Error}};
@@ -279,9 +284,17 @@ sync(Sock) ->
     send_pkg(Sock, [<<"SYNC">>]).
 
 psync(Sock, RunId, Offset) ->
-    send_pkg(Sock, [<<"PSYNC">>, ?SB, RunId, ?SB, Offset]).
+    send_pkg(Sock, [<<"PSYNC">>, ?SB, l2b(RunId), ?SB, i2b(Offset)]).
 
 %% Get client listen port in binary format
 get_lport(Sock) ->
     {ok, Port} = inet:port(Sock),
-    list_to_binary(integer_to_list(Port)).
+    i2b(Port).
+
+%% Short func for list to binary
+l2b(L) ->
+    list_to_binary(L).
+
+%% Short func for integer to binary
+i2b(I) ->
+    list_to_binary(integer_to_list(I)).
