@@ -18,8 +18,9 @@
 
 -record(state, {runid="?",
                 offset=-1,
-                socket,
+                mode,
                 state,
+                socket,
                 monitor,
                 from}).
 
@@ -69,7 +70,7 @@ handle_cast(capa, S = #state{socket=Sock, state=eof}) ->
     io:format("capa ~n"),
     Type = handle_sock(capa(Sock), S), % BUG: take care of recv errors.
     gen_server:cast(self(), Type),
-    {noreply, S#state{state=load}};
+    {noreply, S#state{state=load, mode=Type}};
 
 %% PSYNC.
 handle_cast(psync, S = #state{socket=_Sock, state=load}) ->
@@ -77,8 +78,13 @@ handle_cast(psync, S = #state{socket=_Sock, state=load}) ->
     {noreply, S};
 
 %% SYNC.
-handle_cast(sync, S = #state{socket=_Sock, state=load}) ->
+handle_cast(sync, S = #state{socket=Sock, state=load}) ->
     io:format("sync ~n"),
+    handle_sock(sync(Sock), S);
+
+%% LOAD RDB DATA
+handle_cast({load_rdb, Bulk}, S = #state{socket=_Sock, state=caca}) -> % FIXME
+    io:format("load_rdb data -> ~p ~n", [Bulk]),
     {noreply, S};
 
 handle_cast(shutdown, State) ->
@@ -88,6 +94,7 @@ handle_cast(shutdown, State) ->
 handle_cast(Msg, State) ->
     io:format("Generic cast: '~p' while in '~p'~n",[Msg, State]),
     {noreply, State}.
+
 
 %% Generic
 handle_call(Msg, From, State) ->
@@ -130,6 +137,7 @@ terminate(Reason, State) ->
 %% Handle the receiving data in socket depending
 %% in which state is.
 handle_sock(ok, S = #state{socket=Sock, state=list}) ->
+    io:format("doing list ~n"),
     case recv_ok(Sock) of
         ok ->
             gen_server:cast(self(), capa),
@@ -137,15 +145,28 @@ handle_sock(ok, S = #state{socket=Sock, state=list}) ->
         {error, Error} ->
             {stop, socket_err, {S, Error}}
     end;
+%% Get type of synchronization
 handle_sock(ok, S = #state{socket=Sock, state=eof}) ->
+    io:format("doing eof ~n"),
     case recv_ok(Sock) of
         ok ->
             psync;
-        {error, "invalid data received"} -> %% Fix this for a better treatment
+        {foo, bar} -> %% Fix this names
             sync;
         {error, Error} -> % BUG in here!!
             {stop, socket_err, {S, Error}}
     end;
+%% Receive the payload from de synchronization command
+handle_sock(ok, S = #state{socket=Sock, state=load, mode=sync}) -> % Remove 'mode=sync'
+    io:format("getting payload ~n"),
+    case recv_payload(Sock) of
+        {stream, Bulk} ->
+            gen_server:cast(self(), {load_rdb, Bulk}),
+            {noreply, S#state{state=caca}}; % Next state will be 'caca' % FIXME
+        {error, Error} ->
+            {stop, socket_err, {S, Error}}
+    end;
+
 handle_sock({error, Error}, S) ->
     {stop, socket_err, {S, Error}};
 handle_sock(_,_) ->
@@ -179,17 +200,33 @@ connect(Addr, Port) when is_tuple(Addr), is_integer(Port) ->
 connect(_, _) ->
     throw("invalid host or port to connect to").
 
+recv_payload(Sock) ->
+    inet:setopts(Sock, [{active,once}]),
+    receive
+        {tcp, Sock, <<Bulk/binary>>} ->
+            {stream, Bulk};
+        {tcp, _Sock, Data} ->
+            io:format("invalid data received '~p' ~n", [Data]),
+            {error, "invalid data received"};
+        {tcp_closed, Sock} ->
+            io:format("Socket ~w closed [~w]~n", [Sock ,self()]),
+            {error, "Tcp socket was closed"};
+        _ ->
+            {error, "Generic error"}
+    end.
+
 recv_ok(Sock) ->
     inet:setopts(Sock, [{active,once}]),
     receive
         {tcp, Sock, <<"+OK", _/binary>>} ->
-            % io:format("Hey received ok!~n"),
             ok;
-        {tcp, Sock, Data} ->
+        {tcp, _Sock, <<"-ERR Unrecognized REPLCONF", _/binary>>} ->
+            {foo, bar}; % FIX ME
+        {tcp, _Sock, Data} ->
             io:format("invalid data received '~p' ~n", [Data]),
             {error, "invalid data received"};
         {tcp_closed, Sock} ->
-            io:format("Socket ~w closed [~w]~n",[Sock ,self()]),
+            io:format("Socket ~w closed [~w]~n", [Sock ,self()]),
             {error, "Tcp socket was closed"};
         _ ->
             {erorr, "Generic error"}
@@ -214,12 +251,12 @@ tcp_connect(Addr, Port) ->
 load_rdb(Pid) when is_pid(Pid) ->
     rdb:load(Pid, ?RDB_FILE);
 load_rdb(_) ->
-    throw("invalid pid to load rdb").
+    {error, "invalid pid to load rdb"}.
 
 save_rdb(Data) when is_binary(Data) ->
     rdb:save(Data, ?RDB_FILE);
 save_rdb(_) ->
-    throw("invalid rdb data").
+    {error, "invalid rdb data"}.
 
 send_pkg(Sock, Pkt) when is_list(Pkt) ->
     gen_tcp:send(Sock, [Pkt] ++ ?CRLF);
@@ -237,6 +274,9 @@ capa(Sock) ->
 
 repl(Sock) ->
     send_pkg(Sock, [<<"REPLCONF listening-port">>, ?SB, get_lport(Sock)]).
+
+sync(Sock) ->
+    send_pkg(Sock, [<<"SYNC">>]).
 
 psync(Sock, RunId, Offset) ->
     send_pkg(Sock, [<<"PSYNC">>, ?SB, RunId, ?SB, Offset]).
