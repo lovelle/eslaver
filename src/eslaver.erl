@@ -12,7 +12,7 @@
          terminate/2,
          code_change/3]).
 
--define(RDB_FILE, "/tmp/master/dump2.rdb").
+-define(RDB_FILE, "/tmp/master/dump3.rdb").
 -define(SB, <<" ">>). % Binary space bar
 -define(CRLF, <<"\r\n">>).
 
@@ -84,7 +84,9 @@ handle_cast(sync, S = #state{socket=Sock, state=load}) ->
     handle_sock(sync(Sock), S);
 
 %% LOAD RDB DATA
-handle_cast({load_rdb, Bulk}, S = #state{socket=_Sock, state=caca}) -> % FIXME
+handle_cast({load_rdb, Bulk}, S = #state{socket=_Sock, state=lalala}) -> % FIXME
+    rdb:save(Bulk, ?RDB_FILE),
+    rdb:load(self(), ?RDB_FILE),
     io:format("load_rdb data -> ~p ~n", [Bulk]),
     {noreply, S};
 
@@ -138,8 +140,8 @@ terminate(Reason, State) ->
 %% in which state is.
 handle_sock(ok, S = #state{socket=Sock, state=list}) ->
     io:format("doing list ~n"),
-    case recv_ok(Sock) of
-        ok ->
+    case recv_repl(Sock) of
+        {ok, _} ->
             gen_server:cast(self(), capa),
             {noreply, S#state{state=eof}}; % Next state will be 'eof'
         {error, Error} ->
@@ -148,28 +150,30 @@ handle_sock(ok, S = #state{socket=Sock, state=list}) ->
 %% Get type of synchronization
 handle_sock(ok, S = #state{socket=Sock, state=eof}) ->
     io:format("doing eof ~n"),
-    case recv_ok(Sock) of
-        ok ->
-            psync;
-        {foo, bar} -> %% Fix this names
-            sync;
+    case recv_repl(Sock) of
+        {ok, Mode} ->
+            Mode;
         {error, Error} -> % BUG in here!!
             {stop, socket_err, {S, Error}}
     end;
-%% Receive the payload from de synchronization command
+%% Receive the payload from de synchronization command 'sync'
 handle_sock(ok, S = #state{socket=Sock, state=load, mode=sync}) -> % Remove 'mode=sync' ?
     io:format("getting payload sync ~n"),
     case recv_payload(Sock) of
         {stream, Bulk} ->
             gen_server:cast(self(), {load_rdb, Bulk}),
-            {noreply, S#state{state=caca}}; % Next state will be 'caca' % FIXME
+            {noreply, S#state{state=lalala}}; % Next state will be 'lalala' % FIXME
         {error, Error} ->
             {stop, socket_err, {S, Error}}
     end;
 
-%% Receive the
-handle_sock(ok, S = #state{socket=_Sock, state=load, mode=psync}) -> % Remove 'mode=sync' ?
+%% Receive the payload from de synchronization command 'psync'
+handle_sock(ok, S = #state{socket=Sock, state=load, mode=psync}) -> % Remove 'mode=sync' ?
     io:format("getting payload psync ~n"),
+    A = recv_payload(Sock),
+    B = recv_payload(Sock),
+    io:format("look -> ~p ~n", [A]),
+    io:format("look -> ~p ~n", [B]),
     {noreply, S};
 
 handle_sock({error, Error}, S) ->
@@ -208,7 +212,9 @@ connect(_, _) ->
 recv_payload(Sock) ->
     inet:setopts(Sock, [{active,once}]),
     receive
-        {tcp, Sock, <<Bulk/binary>>} ->
+        {tcp, Sock, <<"+FULLRESYNC", _, RunId:40/binary, _, Offset/binary>>} ->
+            {foo, b2l(RunId), int_offset(Offset)};
+        {tcp, _Sock, <<Bulk/binary>>} ->
             {stream, Bulk};
         {tcp, _Sock, Data} ->
             io:format("invalid data received '~p' ~n", [Data]),
@@ -220,13 +226,13 @@ recv_payload(Sock) ->
             {error, "Generic error"}
     end.
 
-recv_ok(Sock) ->
+recv_repl(Sock) ->
     inet:setopts(Sock, [{active,once}]),
     receive
         {tcp, Sock, <<"+OK", _/binary>>} ->
-            ok;
+            {ok, psync};
         {tcp, _Sock, <<"-ERR Unrecognized REPLCONF", _/binary>>} ->
-            {foo, bar}; % FIX ME
+            {ok, sync};
         {tcp, _Sock, Data} ->
             io:format("invalid data received '~p' ~n", [Data]),
             {error, "invalid data received"};
@@ -264,6 +270,7 @@ save_rdb(_) ->
     {error, "invalid rdb data"}.
 
 send_pkg(Sock, Pkt) when is_list(Pkt) ->
+    io:format("pkt -> ~p ~n", [Pkt]),
     gen_tcp:send(Sock, [Pkt] ++ ?CRLF);
 send_pkg(_, _) ->
     throw("cannot send invalid tcp paquet").
@@ -291,10 +298,21 @@ get_lport(Sock) ->
     {ok, Port} = inet:port(Sock),
     i2b(Port).
 
-%% Short func for list to binary
-l2b(L) ->
+%% Short func for 'binary_to_list'
+b2l(B) when is_binary(B) ->
+    binary_to_list(B).
+
+%% Short func for 'list_to_binary'
+l2b(L) when is_list(L) ->
     list_to_binary(L).
 
-%% Short func for integer to binary
-i2b(I) ->
+%% Short func for 'integer_to_binary'
+i2b(I) when is_integer(I) ->
     list_to_binary(integer_to_list(I)).
+
+%% Convert -> <<"666\r\n">> to normal integer
+int_offset(B) when is_binary(B) ->
+    B2 = hd(binary:split(B, <<"\r\n">>)), % First element of binary
+    binary_to_integer(B2);
+int_offset(_) ->
+    throw("error in binary offset").
