@@ -54,8 +54,6 @@ init([]) ->
             {stop, {Exception, Reason}}
     end.
 
-% load_rdb(self()), % load rdb file
-
 %% REPLCONF listening-port.
 %% The initial step, send the repl with our
 %% client tcp port over the socket.
@@ -83,11 +81,18 @@ handle_cast(sync, S = #state{socket=Sock, state=load}) ->
     io:format("sync ~n"),
     handle_sock(sync(Sock), S);
 
-%% LOAD RDB DATA
-handle_cast({load_rdb, Bulk}, S = #state{socket=_Sock, state=lalala}) -> % FIXME
-    rdb:save(Bulk, ?RDB_FILE),
-    rdb:load(self(), ?RDB_FILE),
-    io:format("load_rdb data -> ~p ~n", [Bulk]),
+%% RDB SAVE
+handle_cast({save_rdb, Bulk}, S = #state{socket=_Sock, state=lalala}) -> % FIXME
+    io:format("save_rdb data -> ~p ~n", [Bulk]),
+    ok = rdb_save(Bulk),
+    gen_server:cast(self(), {load_rdb, self()}),
+    {noreply, S#state{state=lalala2}}; % Next state will be 'lalala2' % FIXME
+
+%% RDB LOAD
+handle_cast({load_rdb, Pid}, S = #state{socket=_Sock, state=lalala2}) -> % FIXME
+    io:format("load_rdb data -> ~p ~n", [Pid]),
+    ok = rdb_load(Pid),
+    %% Continue!
     {noreply, S};
 
 handle_cast(shutdown, State) ->
@@ -103,9 +108,9 @@ handle_call(Msg, From, State) ->
     io:format("Generic call: '~p' from '~p' while in '~p'~n",[Msg, From, State]),
     {reply, ok, State}.
 
-handle_info({loading, list, <<Key/binary>>, [FirstElem|_]}, State) ->
-    io:format("key '~s' -> elem '~p' ~n", [Key, FirstElem]),
-    {noreply, State};
+%handle_info({loading, list, <<Key/binary>>, [FirstElem|_]}, State) ->
+%    io:format("key '~s' -> elem '~p' ~n", [Key, FirstElem]),
+%    {noreply, State};
 handle_info({loading, eof}, State) ->
     io:format("rdb synchronization completed ~n"),
     {noreply, State};
@@ -161,7 +166,7 @@ handle_sock(ok, S = #state{socket=Sock, state=load, mode=sync}) -> % Remove 'mod
     io:format("getting payload sync ~n"),
     case recv_payload(Sock) of
         {stream, Bulk} ->
-            gen_server:cast(self(), {load_rdb, Bulk}),
+            gen_server:cast(self(), {save_rdb, Bulk}),
             {noreply, S#state{state=lalala}}; % Next state will be 'lalala' % FIXME
         {error, Error} ->
             {stop, socket_err, {S, Error}}
@@ -172,8 +177,8 @@ handle_sock(ok, S = #state{socket=Sock, state=load, mode=psync}) -> % Remove 'mo
     io:format("getting payload psync ~n"),
     A = recv_payload(Sock),
     B = recv_payload(Sock),
-    io:format("look -> ~p ~n", [A]),
-    io:format("look -> ~p ~n", [B]),
+    io:format("lookA -> ~p ~n", [A]),
+    io:format("lookB -> ~p ~n", [B]),
     {noreply, S};
 
 handle_sock({error, Error}, S) ->
@@ -213,7 +218,7 @@ recv_payload(Sock) ->
     inet:setopts(Sock, [{active,once}]),
     receive
         {tcp, Sock, <<"+FULLRESYNC", _, RunId:40/binary, _, Offset/binary>>} ->
-            {foo, b2l(RunId), int_offset(Offset)};
+            {foo, b2l(RunId), int_offset(Offset)}; % Fix my name
         {tcp, _Sock, <<Bulk/binary>>} ->
             {stream, Bulk};
         {tcp, _Sock, Data} ->
@@ -259,14 +264,14 @@ recv_pong(Sock) ->
 tcp_connect(Addr, Port) ->
     gen_tcp:connect(Addr, Port, [binary, {active, false}]).
 
-load_rdb(Pid) when is_pid(Pid) ->
+rdb_load(Pid) when is_pid(Pid) ->
     rdb:load(Pid, ?RDB_FILE);
-load_rdb(_) ->
+rdb_load(_) ->
     {error, "invalid pid to load rdb"}.
 
-save_rdb(Data) when is_binary(Data) ->
+rdb_save(Data) when is_binary(Data) ->
     rdb:save(Data, ?RDB_FILE);
-save_rdb(_) ->
+rdb_save(_) ->
     {error, "invalid rdb data"}.
 
 send_pkg(Sock, Pkt) when is_list(Pkt) ->
