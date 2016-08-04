@@ -29,10 +29,10 @@
 %% API calls
 %%====================================================================
 start() ->
-    gen_server:start_link(?MODULE, [], []).
+    gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
 
 stop() ->
-    gen_server:call(?MODULE, shutdown).
+    gen_server:call({global, ?MODULE}, shutdown).
 
 %%====================================================================
 %% gen_server callbacks
@@ -66,47 +66,53 @@ handle_cast(repl, S = #state{socket=Sock, state=list}) ->
 %% synchronization or just can handle whole sync.
 handle_cast(capa, S = #state{socket=Sock, state=eof}) ->
     io:format("capa ~n"),
-    Type = handle_sock(capa(Sock), S), % BUG: take care of recv errors.
-    gen_server:cast(self(), Type),
-    {noreply, S#state{state=load, mode=Type}};
+    handle_sock(capa(Sock), S);
 
 %% PSYNC.
 handle_cast(psync, S = #state{socket=Sock, state=load}) ->
     io:format("psync ~n"),
-    handle_sock(psync(Sock, S#state.runid, S#state.offset), S),
-    {noreply, S};
+    handle_sock(psync(Sock, S#state.runid, S#state.offset), S);
 
 %% SYNC.
 handle_cast(sync, S = #state{socket=Sock, state=load}) ->
     io:format("sync ~n"),
     handle_sock(sync(Sock), S);
 
+%% First step of receiving payload when is psync.
+handle_cast(psync, S = #state{state=payload}) ->
+    io:format("psync payload -> ~n"),
+    handle_sock(get_payload, S);
+
 %% RDB SAVE
-handle_cast({save_rdb, Bulk}, S = #state{socket=_Sock, state=lalala}) -> % FIXME
+handle_cast({save_rdb, Bulk}, S = #state{state=payload}) ->
     io:format("save_rdb data -> ~p ~n", [Bulk]),
     ok = rdb_save(Bulk),
     gen_server:cast(self(), {load_rdb, self()}),
-    {noreply, S#state{state=lalala2}}; % Next state will be 'lalala2' % FIXME
-
-%% RDB LOAD
-handle_cast({load_rdb, Pid}, S = #state{socket=_Sock, state=lalala2}) -> % FIXME
-    io:format("load_rdb data -> ~p ~n", [Pid]),
-    ok = rdb_load(Pid),
-    %% Continue!
     {noreply, S};
 
-handle_cast(shutdown, State) ->
-    io:format("Generic cast: *shutdown* while in '~p'~n",[State]),
-    {stop, normal, State};
+%% RDB LOAD
+handle_cast({load_rdb, Pid}, S = #state{state=payload}) ->
+    io:format("load_rdb data -> ~p ~n", [Pid]),
+    ok = rdb_load(Pid),
+    gen_server:cast(self(), replication), % Move this to eof handle_info
+    {noreply, S#state{state=stream}};
+
+%% Stream replication
+handle_cast(replication, S = #state{state=stream}) ->
+    io:format("receive stream ~n"),
+    {noreply, S};
+
 %% Generic
 handle_cast(Msg, State) ->
     io:format("Generic cast: '~p' while in '~p'~n",[Msg, State]),
     {noreply, State}.
 
+handle_call(shutdown, _From, State) ->
+    io:format("Generic call: *shutdown* while in '~p'~n",[State]),
+    {stop, normal, ok, State};
 %% Generic
 handle_call(Msg, From, State) ->
-    io:format("Generic call: '~p' from '~p' while in '~p'~n",[Msg, From, State]),
-    {reply, ok, State}.
+    {noreply, State}.
 
 %handle_info({loading, list, <<Key/binary>>, [FirstElem|_]}, State) ->
 %    io:format("key '~s' -> elem '~p' ~n", [Key, FirstElem]),
@@ -125,9 +131,10 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Server termination
 terminate(socket_err, {S, Error}) ->
-    io:format("Error over socket ~p ~n", [Error]),
-    gen_tcp:close(S#state.socket);
+    gen_tcp:close(S#state.socket),
+    io:format("Error over socket ~p ~n", [Error]);
 terminate(Reason, State) ->
+    gen_tcp:close(State#state.socket),
     io:format("Generic termination: '~p' '~p'~n",[Reason, State]).
 
 %
@@ -156,35 +163,39 @@ handle_sock(ok, S = #state{socket=Sock, state=list}) ->
 handle_sock(ok, S = #state{socket=Sock, state=eof}) ->
     io:format("doing eof ~n"),
     case recv_repl(Sock) of
-        {ok, Mode} ->
-            Mode;
+        {ok, Type} ->
+            gen_server:cast(self(), Type),
+            {noreply, S#state{state=load, mode=Type}};
         {error, Error} -> % BUG in here!!
             {stop, socket_err, {S, Error}}
     end;
 %% Receive the payload from de synchronization command 'sync'
-handle_sock(ok, S = #state{socket=Sock, state=load, mode=sync}) -> % Remove 'mode=sync' ?
+handle_sock(ok, S = #state{socket=Sock, state=load, mode=sync}) ->
     io:format("getting payload sync ~n"),
-    case recv_payload(Sock) of
-        {stream, Bulk} ->
-            gen_server:cast(self(), {save_rdb, Bulk}),
-            {noreply, S#state{state=lalala}}; % Next state will be 'lalala' % FIXME
-        {error, Error} ->
-            {stop, socket_err, {S, Error}}
-    end;
+    handle_recv(recv_once(Sock), S);
 
-%% Receive the payload from de synchronization command 'psync'
-handle_sock(ok, S = #state{socket=Sock, state=load, mode=psync}) -> % Remove 'mode=sync' ?
-    io:format("getting payload psync ~n"),
-    A = recv_payload(Sock),
-    B = recv_payload(Sock),
-    io:format("lookA -> ~p ~n", [A]),
-    io:format("lookB -> ~p ~n", [B]),
-    {noreply, S};
+handle_sock(ok, S = #state{socket=Sock, state=load, mode=psync}) ->
+    io:format("getting payload psync 1st ~n"),
+    handle_recv(recv_once(Sock), S);
+
+handle_sock(get_payload, S = #state{socket=Sock, state=payload, mode=psync}) ->
+    io:format("getting payload psync 2nd ~n"),
+    handle_recv(recv_once(Sock), S);
 
 handle_sock({error, Error}, S) ->
     {stop, socket_err, {S, Error}};
 handle_sock(_,_) ->
     {stop, general, "general socket error"}.
+
+
+handle_recv({fullresync, RunId, Offset}, S) ->
+    gen_server:cast(self(), psync),
+    {noreply, S#state{state=payload, runid=RunId, offset=Offset}}; % Next state will be 'payload'
+handle_recv({load_stream, Bulk}, S) ->
+    gen_server:cast(self(), {save_rdb, Bulk}),
+    {noreply, S#state{state=payload}}; % Next state will be 'payload'
+handle_recv({error, Error}, S) ->
+    {stop, socket_err, {S, Error}}.
 
 
 initial() ->
@@ -214,13 +225,13 @@ connect(Addr, Port) when is_tuple(Addr), is_integer(Port) ->
 connect(_, _) ->
     throw("invalid host or port to connect to").
 
-recv_payload(Sock) ->
+recv_once(Sock) ->
     inet:setopts(Sock, [{active,once}]),
     receive
         {tcp, Sock, <<"+FULLRESYNC", _, RunId:40/binary, _, Offset/binary>>} ->
-            {foo, b2l(RunId), int_offset(Offset)}; % Fix my name
+            {fullresync, b2l(RunId), int_offset(Offset)}; % Fix my name
         {tcp, _Sock, <<Bulk/binary>>} ->
-            {stream, Bulk};
+            {load_stream, Bulk};
         {tcp, _Sock, Data} ->
             io:format("invalid data received '~p' ~n", [Data]),
             {error, "invalid data received"};
