@@ -40,7 +40,7 @@ stop() ->
 init([]) ->
     process_flag(trap_exit, true),
     try initial() of
-        {ok, Sock} ->
+        {ok, pong, Sock} ->
             gen_server:cast(self(), repl),
             {ok, #state{socket=Sock, state=list}};
         {error, timeout} ->
@@ -111,7 +111,7 @@ handle_call(shutdown, _From, State) ->
     io:format("Generic call: *shutdown* while in '~p'~n",[State]),
     {stop, normal, ok, State};
 %% Generic
-handle_call(Msg, From, State) ->
+handle_call(_Msg, _From, State) ->
     {noreply, State}.
 
 %handle_info({loading, list, <<Key/binary>>, [FirstElem|_]}, State) ->
@@ -188,10 +188,10 @@ handle_sock(_,_) ->
     {stop, general, "general socket error"}.
 
 
-handle_recv({fullresync, RunId, Offset}, S) ->
+handle_recv({ok, fullresync, RunId, Offset}, S) ->
     gen_server:cast(self(), psync),
     {noreply, S#state{state=payload, runid=RunId, offset=Offset}}; % Next state will be 'payload'
-handle_recv({load_stream, Bulk}, S) ->
+handle_recv({ok, load_stream, Bulk}, S) ->
     gen_server:cast(self(), {save_rdb, Bulk}),
     {noreply, S#state{state=payload}}; % Next state will be 'payload'
 handle_recv({error, Error}, S) ->
@@ -229,9 +229,9 @@ recv_once(Sock) ->
     inet:setopts(Sock, [{active,once}]),
     receive
         {tcp, Sock, <<"+FULLRESYNC", _, RunId:40/binary, _, Offset/binary>>} ->
-            {fullresync, b2l(RunId), int_offset(Offset)}; % Fix my name
+            {ok, fullresync, b2l(RunId), int_offset(Offset)};
         {tcp, _Sock, <<Bulk/binary>>} ->
-            {load_stream, Bulk};
+            {ok, load_stream, Bulk};
         {tcp, _Sock, Data} ->
             io:format("invalid data received '~p' ~n", [Data]),
             {error, "invalid data received"};
@@ -263,7 +263,7 @@ recv_pong(Sock) ->
     inet:setopts(Sock, [{active,once}]),
     receive
         {tcp, Sock, <<"+PONG", _/binary>>} ->
-            {ok, Sock};
+            {ok, pong, Sock};
         {tcp, Sock, Data} ->
             io:format("invalid data received '~p' ~n", [Data]),
             {error, "invalid data received for pong"};
@@ -328,7 +328,7 @@ i2b(I) when is_integer(I) ->
 
 %% Convert -> <<"666\r\n">> to normal integer
 int_offset(B) when is_binary(B) ->
-    B2 = hd(binary:split(B, <<"\r\n">>)), % First element of binary
+    B2 = hd(binary:split(B, ?CRLF)), % First element of binary
     binary_to_integer(B2);
 int_offset(_) ->
     throw("error in binary offset").
