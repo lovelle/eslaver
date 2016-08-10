@@ -46,9 +46,9 @@ init([]) ->
         {error, timeout} ->
             io:format("timeout"),
             {stop, timeout};
-        {error, Error} ->
-            io:format("Error -> '~p' ~n", [Error]),
-            {stop, Error}
+        {error, Reason} ->
+            io:format("Error -> '~p' ~n", [Reason]),
+            {stop, Reason}
     catch
         Exception:Reason ->
             {stop, {Exception, Reason}}
@@ -93,13 +93,15 @@ handle_cast({save_rdb, Bulk}, S = #state{state=payload}) ->
 %% RDB LOAD
 handle_cast({load_rdb, Pid}, S = #state{state=payload}) ->
     io:format("load_rdb data -> ~p ~n", [Pid]),
-    ok = rdb_load(Pid),
+    ok = rdb_load(Pid), % Fixme, rdb_load parse can be '{error, Reason}'
     gen_server:cast(self(), replication), % Move this to eof handle_info
     {noreply, S#state{state=stream}};
 
 %% Stream replication
-handle_cast(replication, S = #state{state=stream}) ->
+handle_cast(replication, S = #state{socket=Sock, state=stream}) ->
     io:format("receive stream ~n"),
+    inet:setopts(Sock, [{active,once}]),
+    io:format("foo ~n"),
     {noreply, S};
 
 %% Generic
@@ -111,7 +113,8 @@ handle_call(shutdown, _From, State) ->
     io:format("Generic call: *shutdown* while in '~p'~n",[State]),
     {stop, normal, ok, State};
 %% Generic
-handle_call(_Msg, _From, State) ->
+handle_call(Msg, _From, State) ->
+    io:format("Generic cast: '~p' while in '~p'~n",[Msg, State]),
     {noreply, State}.
 
 %handle_info({loading, list, <<Key/binary>>, [FirstElem|_]}, State) ->
@@ -120,7 +123,12 @@ handle_call(_Msg, _From, State) ->
 handle_info({loading, eof}, State) ->
     io:format("rdb synchronization completed ~n"),
     {noreply, State};
-%%Generic
+
+handle_info({tcp, Sock, Data}, State) ->
+    io:format("tcp stream: '~p' '~p'~n",[Data, State]),
+    inet:setopts(Sock, [{active,once}]),
+    {noreply, State};
+%% Generic
 handle_info(Msg, State) ->
     io:format("Generic info: '~p' '~p'~n",[Msg, State]),
     {noreply, State}.
@@ -130,9 +138,9 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% Server termination
-terminate(socket_err, {S, Error}) ->
+terminate(socket_err, {S, Reason}) ->
     gen_tcp:close(S#state.socket),
-    io:format("Error over socket ~p ~n", [Error]);
+    io:format("Error over socket ~p ~n", [Reason]);
 terminate(Reason, State) ->
     gen_tcp:close(State#state.socket),
     io:format("Generic termination: '~p' '~p'~n",[Reason, State]).
@@ -152,38 +160,38 @@ terminate(Reason, State) ->
 %% in which state is.
 handle_sock(ok, S = #state{socket=Sock, state=list}) ->
     io:format("doing list ~n"),
-    case recv_repl(Sock) of
+    case recv_sock(Sock) of
         {ok, _} ->
             gen_server:cast(self(), capa),
             {noreply, S#state{state=eof}}; % Next state will be 'eof'
-        {error, Error} ->
-            {stop, socket_err, {S, Error}}
+        {error, Reason} ->
+            {stop, socket_err, {S, Reason}}
     end;
 %% Get type of synchronization
 handle_sock(ok, S = #state{socket=Sock, state=eof}) ->
     io:format("doing eof ~n"),
-    case recv_repl(Sock) of
+    case recv_sock(Sock) of
         {ok, Type} ->
             gen_server:cast(self(), Type),
             {noreply, S#state{state=load, mode=Type}};
-        {error, Error} -> % BUG in here!!
-            {stop, socket_err, {S, Error}}
+        {error, Reason} -> % BUG in here!!
+            {stop, socket_err, {S, Reason}}
     end;
 %% Receive the payload from de synchronization command 'sync'
 handle_sock(ok, S = #state{socket=Sock, state=load, mode=sync}) ->
     io:format("getting payload sync ~n"),
-    handle_recv(recv_once(Sock), S);
+    handle_recv(recv_sock(Sock), S);
 
 handle_sock(ok, S = #state{socket=Sock, state=load, mode=psync}) ->
     io:format("getting payload psync 1st ~n"),
-    handle_recv(recv_once(Sock), S);
+    handle_recv(recv_sock(Sock), S);
 
 handle_sock(get_payload, S = #state{socket=Sock, state=payload, mode=psync}) ->
     io:format("getting payload psync 2nd ~n"),
-    handle_recv(recv_once(Sock), S);
+    handle_recv(recv_sock(Sock), S);
 
-handle_sock({error, Error}, S) ->
-    {stop, socket_err, {S, Error}};
+handle_sock({error, Reason}, S) ->
+    {stop, socket_err, {S, Reason}};
 handle_sock(_,_) ->
     {stop, general, "general socket error"}.
 
@@ -194,8 +202,8 @@ handle_recv({ok, fullresync, RunId, Offset}, S) ->
 handle_recv({ok, load_stream, Bulk}, S) ->
     gen_server:cast(self(), {save_rdb, Bulk}),
     {noreply, S#state{state=payload}}; % Next state will be 'payload'
-handle_recv({error, Error}, S) ->
-    {stop, socket_err, {S, Error}}.
+handle_recv({error, Reason}, S) ->
+    {stop, socket_err, {S, Reason}}.
 
 
 initial() ->
@@ -204,7 +212,7 @@ initial() ->
     Sock = connect(Addr, Port),
     case ping(Sock) of
         ok ->
-            recv_pong(Sock);
+            recv_sock(Sock);
         {error, timeout} ->
             io:format("Send timeout, closing! ~n"),
             gen_tcp:close(Sock),
@@ -215,21 +223,18 @@ initial() ->
             throw(OtherSendError)
     end.
 
-connect(Addr, Port) when is_tuple(Addr), is_integer(Port) ->
-    case tcp_connect(Addr, Port) of
-        {ok, Sock} ->
-            Sock;
-        {error, Error} ->
-            throw(Error)
-    end;
-connect(_, _) ->
-    throw("invalid host or port to connect to").
-
-recv_once(Sock) ->
+recv_sock(Sock) ->
     inet:setopts(Sock, [{active,once}]),
     receive
+        % "-LOADING"
+        {tcp, Sock, <<"+OK", _/binary>>} ->
+            {ok, psync};
+        {tcp, Sock, <<"+PONG", _/binary>>} ->
+            {ok, pong, Sock};
         {tcp, Sock, <<"+FULLRESYNC", _, RunId:40/binary, _, Offset/binary>>} ->
             {ok, fullresync, b2l(RunId), int_offset(Offset)};
+        {tcp, _Sock, <<"-ERR Unrecognized REPLCONF", _/binary>>} ->
+            {ok, sync};
         {tcp, _Sock, <<Bulk/binary>>} ->
             {ok, load_stream, Bulk};
         {tcp, _Sock, Data} ->
@@ -242,35 +247,15 @@ recv_once(Sock) ->
             {error, "Generic error"}
     end.
 
-recv_repl(Sock) ->
-    inet:setopts(Sock, [{active,once}]),
-    receive
-        {tcp, Sock, <<"+OK", _/binary>>} ->
-            {ok, psync};
-        {tcp, _Sock, <<"-ERR Unrecognized REPLCONF", _/binary>>} ->
-            {ok, sync};
-        {tcp, _Sock, Data} ->
-            io:format("invalid data received '~p' ~n", [Data]),
-            {error, "invalid data received"};
-        {tcp_closed, Sock} ->
-            io:format("Socket ~w closed [~w]~n", [Sock ,self()]),
-            {error, "Tcp socket was closed"};
-        _ ->
-            {erorr, "Generic error"}
-    end.
-
-recv_pong(Sock) ->
-    inet:setopts(Sock, [{active,once}]),
-    receive
-        {tcp, Sock, <<"+PONG", _/binary>>} ->
-            {ok, pong, Sock};
-        {tcp, Sock, Data} ->
-            io:format("invalid data received '~p' ~n", [Data]),
-            {error, "invalid data received for pong"};
-        {tcp_closed, Sock} ->
-            io:format("Socket ~w closed [~w]~n",[Sock ,self()]),
-            {error, "Tcp socket was closed"}
-    end.
+connect(Addr, Port) when is_tuple(Addr), is_integer(Port) ->
+    case tcp_connect(Addr, Port) of
+        {ok, Sock} ->
+            Sock;
+        {error, Reason} ->
+            throw(Reason)
+    end;
+connect(_, _) ->
+    throw("invalid host or port to connect to").
 
 tcp_connect(Addr, Port) ->
     gen_tcp:connect(Addr, Port, [binary, {active, false}]).
