@@ -13,7 +13,7 @@
          code_change/3]).
 
 -define(RDB_FILE, "/tmp/master/dump3.rdb").
--define(SB, <<" ">>). % Binary space bar
+-define(BS, <<" ">>). % Binary blank space
 -define(CRLF, <<"\r\n">>).
 
 -record(state, {runid="?",
@@ -44,10 +44,10 @@ init([]) ->
             gen_server:cast(self(), repl),
             {ok, #state{socket=Sock, state=list}};
         {error, timeout} ->
-            io:format("timeout"),
+            % io:format("timeout"),
             {stop, timeout};
         {error, Reason} ->
-            io:format("Error -> '~p' ~n", [Reason]),
+            % io:format("Error -> '~p' ~n", [Reason]),
             {stop, Reason}
     catch
         Exception:Reason ->
@@ -101,7 +101,6 @@ handle_cast({load_rdb, Pid}, S = #state{state=payload}) ->
 handle_cast(replication, S = #state{socket=Sock, state=stream}) ->
     io:format("receive stream ~n"),
     inet:setopts(Sock, [{active,once}]),
-    io:format("foo ~n"),
     {noreply, S};
 
 %% Generic
@@ -209,16 +208,38 @@ handle_recv({error, Reason}, S) ->
 initial() ->
     Addr = {127,0,0,1},
     Port = 6379,
+    Pass = undef,
     Sock = connect(Addr, Port),
+
+    case do_auth(Pass) of
+        true -> send_auth(Sock, Pass);
+        false -> false
+    end,
+    send_ping(Sock).
+
+send_ping(Sock) ->
     case ping(Sock) of
         ok ->
             recv_sock(Sock);
         {error, timeout} ->
-            io:format("Send timeout, closing! ~n"),
             gen_tcp:close(Sock),
             throw(timeout);
         {error, OtherSendError} ->
-            io:format("Error over initial socket ~n"),
+            gen_tcp:close(Sock),
+            throw(OtherSendError)
+    end.
+
+send_auth(Sock, Pass) ->
+    case auth(Sock, Pass) of
+        ok ->
+            case recv_sock(Sock) of
+                {ok, _} ->
+                    ok;
+                {error, Error} ->
+                    gen_tcp:close(Sock),
+                    throw(Error)
+            end;
+        {error, OtherSendError} ->
             gen_tcp:close(Sock),
             throw(OtherSendError)
     end.
@@ -235,6 +256,8 @@ recv_sock(Sock) ->
             {ok, fullresync, b2l(RunId), int_offset(Offset)};
         {tcp, _Sock, <<"-ERR Unrecognized REPLCONF", _/binary>>} ->
             {ok, sync};
+        {tcp, _Sock, <<"-", Error/binary>>} ->
+            {error, Error};
         {tcp, _Sock, <<Bulk/binary>>} ->
             {ok, load_stream, Bulk};
         {tcp, _Sock, Data} ->
@@ -271,7 +294,6 @@ rdb_save(_) ->
     {error, "invalid rdb data"}.
 
 send_pkg(Sock, Pkt) when is_list(Pkt) ->
-    io:format("pkt -> ~p ~n", [Pkt]),
     gen_tcp:send(Sock, [Pkt] ++ ?CRLF);
 send_pkg(_, _) ->
     throw("cannot send invalid tcp paquet").
@@ -280,19 +302,25 @@ ping(Sock) ->
     send_pkg(Sock, [<<"PING">>]).
 
 auth(Sock, MasterAuth) ->
-    send_pkg(Sock, [<<"AUTH">>, ?SB, list_to_binary(MasterAuth)]).
+    send_pkg(Sock, [<<"AUTH">>, ?BS, list_to_binary(MasterAuth)]).
 
 capa(Sock) ->
     send_pkg(Sock, [<<"REPLCONF capa eof">>]).
 
 repl(Sock) ->
-    send_pkg(Sock, [<<"REPLCONF listening-port">>, ?SB, get_lport(Sock)]).
+    send_pkg(Sock, [<<"REPLCONF listening-port">>, ?BS, get_lport(Sock)]).
 
 sync(Sock) ->
     send_pkg(Sock, [<<"SYNC">>]).
 
 psync(Sock, RunId, Offset) ->
-    send_pkg(Sock, [<<"PSYNC">>, ?SB, l2b(RunId), ?SB, i2b(Offset)]).
+    send_pkg(Sock, [<<"PSYNC">>, ?BS, l2b(RunId), ?BS, i2b(Offset)]).
+
+% Authentication is needed ?.
+do_auth(Pass) when length(Pass) > 1 ->
+    true;
+do_auth(_) ->
+    false.
 
 %% Get client listen port in binary format
 get_lport(Sock) ->
