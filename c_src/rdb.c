@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <stdint.h>
 #include <limits.h>
+#include <netinet/in.h>
 
 #include "lzf.h"
 #include "sds.h"
