@@ -16,6 +16,9 @@
 -define(BS, <<" ">>). % Binary blank space
 -define(CRLF, <<"\r\n">>).
 
+%% Heartbeat for psync repl
+-define(REPL_TIMEOUT, 1000).
+
 -record(state, {runid="?",
                 offset=-1,
                 mode,
@@ -86,7 +89,7 @@ handle_cast(psync, S = #state{state=payload}) ->
 %% RDB SAVE
 handle_cast({save_rdb, Bulk}, S = #state{state=payload}) ->
     io:format("save_rdb data -> ~p ~n", [Bulk]),
-    ok = rdb_save(Bulk),
+    ok = rdb_save(Bulk, 0), % Fixme, rdb_save parse can be '{error, Reason}'
     gen_server:cast(self(), {load_rdb, self()}),
     {noreply, S};
 
@@ -97,11 +100,17 @@ handle_cast({load_rdb, Pid}, S = #state{state=payload}) ->
     gen_server:cast(self(), replication), % Move this to eof handle_info
     {noreply, S#state{state=stream}};
 
-%% Stream replication
-handle_cast(replication, S = #state{socket=Sock, state=stream}) ->
+%% Stream replication for sync mode
+handle_cast(replication, S = #state{socket=Sock, state=stream, mode=sync}) ->
     io:format("receive stream ~n"),
     inet:setopts(Sock, [{active,once}]),
     {noreply, S};
+
+%% Stream replication for psync mode
+handle_cast(replication, S = #state{socket=Sock, state=stream, mode=psync}) ->
+    io:format("receive stream ~n"),
+    inet:setopts(Sock, [{active,once}]),
+    {noreply, S, ?REPL_TIMEOUT};
 
 %% Generic
 handle_cast(Msg, State) ->
@@ -123,10 +132,28 @@ handle_info({loading, eof}, State) ->
     io:format("rdb synchronization completed ~n"),
     {noreply, State};
 
-handle_info({tcp, Sock, Data}, State) ->
-    io:format("tcp stream: '~p' '~p'~n",[Data, State]),
+handle_info({tcp, Sock, Data}, S = #state{state=stream, mode=sync}) ->
+    io:format("sync tcp stream: '~p' '~p'~n",[Data, S]),
     inet:setopts(Sock, [{active,once}]),
-    {noreply, State};
+    {noreply, S};
+
+handle_info({tcp, Sock, Data}, S = #state{state=stream, mode=psync}) ->
+    io:format("psync tcp stream: '~p' '~p'~n",[Data, S]),
+    inet:setopts(Sock, [{active,once}]),
+    {noreply, S, ?REPL_TIMEOUT};
+
+%% Psync mode need to send offset data periodically
+%% in order to maintain the slavery active in socket.
+handle_info(timeout, S = #state{mode=psync, state=stream}) ->
+    io:format("REPLCONF ack '~p' ~n", [S]),
+    {noreply, S, ?REPL_TIMEOUT};
+
+handle_info({tcp_closed, _Sock}, S) ->
+    io:format("tcp connection closed from master ~n"),
+    {noreply, S};
+handle_info({tcp_error, _Sock, Reason}, _S) ->
+    io:format("tcp connection error from master ~n"),
+    {stop, Reason};
 %% Generic
 handle_info(Msg, State) ->
     io:format("Generic info: '~p' '~p'~n",[Msg, State]),
@@ -288,9 +315,9 @@ rdb_load(Pid) when is_pid(Pid) ->
 rdb_load(_) ->
     {error, "invalid pid to load rdb"}.
 
-rdb_save(Data) when is_binary(Data) ->
+rdb_save(Data, _Mode) when is_binary(Data), is_integer(_Mode) ->
     rdb:save(Data, ?RDB_FILE);
-rdb_save(_) ->
+rdb_save(_, _) ->
     {error, "invalid rdb data"}.
 
 send_pkg(Sock, Pkt) when is_list(Pkt) ->

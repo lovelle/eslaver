@@ -725,6 +725,7 @@ int write_log(char *text) {
 static ERL_NIF_TERM save(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     char filename[128];
     int i, usemark = 0;
+    char *file_mode = "w";
     ErlNifBinary bin;
     FILE *fp;
 
@@ -739,7 +740,14 @@ static ERL_NIF_TERM save(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     if (!enif_get_string(env, argv[1], filename, sizeof(filename), ERL_NIF_LATIN1))
         return mk_error(env, "invalid filename arg");
 
-    if ((fp = fopen(filename, "w")) == NULL)
+    /* If internal flag is set to 1, means it has been
+     * received large chunked data from tcp, so rdb file must
+     * be written in appending mode instead of by default
+     * writting mode.
+     */
+    // if (flag == 1) file_mode = "a";
+
+    if ((fp = fopen(filename, file_mode)) == NULL)
         return mk_error(env, "cannot create rdb file");
 
     /* Write received binary as rdb into file */
