@@ -62,7 +62,7 @@ init([]) ->
 %% client tcp port over the socket.
 handle_cast(repl, S = #state{socket=Sock, state=list}) ->
     io:format("repl ~n"),
-    handle_sock(repl(Sock), S);
+    handle_sock(repl_listen(Sock), S);
 
 %% REPLCONF capa eof.
 %% Check wheter the server is able to do partial
@@ -133,26 +133,28 @@ handle_info({loading, eof}, State) ->
     {noreply, State};
 
 handle_info({tcp, Sock, Data}, S = #state{state=stream, mode=sync}) ->
-    io:format("sync tcp stream: '~p' '~p'~n",[Data, S]),
     inet:setopts(Sock, [{active,once}]),
+    io:format("sync tcp stream: '~p' '~p'~n",[Data, S]),
     {noreply, S};
 
 handle_info({tcp, Sock, Data}, S = #state{state=stream, mode=psync}) ->
-    io:format("psync tcp stream: '~p' '~p'~n",[Data, S]),
     inet:setopts(Sock, [{active,once}]),
-    {noreply, S, ?REPL_TIMEOUT};
+    io:format("psync tcp stream: '~p' '~p'~n",[Data, S]),
+    NewOffset = (S#state.offset + byte_size(Data)),
+    {noreply, S#state{offset=NewOffset}, ?REPL_TIMEOUT};
 
 %% Psync mode need to send offset data periodically
 %% in order to maintain the slavery active in socket.
-handle_info(timeout, S = #state{mode=psync, state=stream}) ->
+handle_info(timeout, S = #state{socket=Sock, offset=Offset, mode=psync, state=stream}) ->
     io:format("REPLCONF ack '~p' ~n", [S]),
+    repl_ack(Sock, Offset),
     {noreply, S, ?REPL_TIMEOUT};
 
 handle_info({tcp_closed, _Sock}, S) ->
-    io:format("tcp connection closed from master ~n"),
+    io:format("tcp connection closed from master '~p' ~n", [S]),
     {noreply, S};
-handle_info({tcp_error, _Sock, Reason}, _S) ->
-    io:format("tcp connection error from master ~n"),
+handle_info({tcp_error, _Sock, Reason}, S) ->
+    io:format("tcp connection error from master '~p' ~n", [S]),
     {stop, Reason};
 %% Generic
 handle_info(Msg, State) ->
@@ -334,8 +336,17 @@ auth(Sock, MasterAuth) ->
 capa(Sock) ->
     send_pkg(Sock, [<<"REPLCONF capa eof">>]).
 
-repl(Sock) ->
+repl_listen(Sock) ->
     send_pkg(Sock, [<<"REPLCONF listening-port">>, ?BS, get_lport(Sock)]).
+
+repl_ack(Sock, Offset) when is_integer(Offset) ->
+    % "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$%d\r\n%s\r\n"
+    LenOffset = byte_size(i2b(Offset)),
+    Data = [<<"*3">>, ?CRLF, <<"$8">>, ?CRLF, <<"REPLCONF">>, ?CRLF,
+            <<"$3">>, ?CRLF, <<"ACK">>,?CRLF, <<"$">>, i2b(LenOffset),
+            ?CRLF, i2b(Offset)],
+    %io:format("repl_ack -> '~p' ~n", [Data]),
+    send_pkg(Sock, Data).
 
 sync(Sock) ->
     send_pkg(Sock, [<<"SYNC">>]).
