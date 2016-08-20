@@ -12,7 +12,7 @@
          terminate/2,
          code_change/3]).
 
--define(RDB_FILE, "/tmp/master/dump3.rdb").
+-define(RDB_FILE, "/tmp/dump3.rdb").
 -define(BS, <<" ">>). % Binary blank space
 -define(CRLF, <<"\r\n">>).
 
@@ -83,34 +83,49 @@ handle_cast(sync, S = #state{socket=Sock, state=load}) ->
 
 %% First step of receiving payload when is psync.
 handle_cast(psync, S = #state{state=payload}) ->
-    io:format("psync payload -> ~n"),
+    io:format("psync payload ~n"),
     handle_sock(get_payload, S);
 
 %% RDB SAVE
 handle_cast({save_rdb, Bulk}, S = #state{state=payload}) ->
-    io:format("save_rdb data -> ~p ~n", [Bulk]),
+    io:format("save_rdb data: ~p ~n", [Bulk]),
     ok = rdb_save(Bulk, 0), % Fixme, rdb_save parse can be '{error, Reason}'
     gen_server:cast(self(), {load_rdb, self()}),
     {noreply, S};
 
 %% RDB LOAD
 handle_cast({load_rdb, Pid}, S = #state{state=payload}) ->
-    io:format("load_rdb data -> ~p ~n", [Pid]),
+    io:format("load_rdb data: ~p ~n", [Pid]),
     ok = rdb_load(Pid), % Fixme, rdb_load parse can be '{error, Reason}'
     gen_server:cast(self(), replication), % Move this to eof handle_info
     {noreply, S#state{state=stream}};
 
 %% Stream replication for sync mode
 handle_cast(replication, S = #state{socket=Sock, state=stream, mode=sync}) ->
-    io:format("receive stream ~n"),
+    io:format("sync receive stream ~n"),
     inet:setopts(Sock, [{active,once}]),
     {noreply, S};
 
 %% Stream replication for psync mode
 handle_cast(replication, S = #state{socket=Sock, state=stream, mode=psync}) ->
-    io:format("receive stream ~n"),
+    io:format("psync receive stream ~n"),
     inet:setopts(Sock, [{active,once}]),
     {noreply, S, ?REPL_TIMEOUT};
+
+%% Reconnect to master server
+handle_cast(new_connection, S = #state{state=reconnect}) ->
+    %% BUG! Warning if master server is not able to receive connections
+    {ok, pong, NewSock} = initial(), % FIXME !
+    gen_server:cast(self(), repl),
+    {noreply, S#state{socket=NewSock, state=reconnect2}};
+handle_cast(repl, S = #state{socket=Sock, state=reconnect2}) ->
+    % os:cmd("redis-cli set foo foo"),
+    % os:cmd("redis-cli set bar bar"),
+    % timer:sleep(20000),
+    handle_sock(repl_listen(Sock), S);
+handle_cast(bar, S = #state{mode=Type, state=reconnect3}) -> % FIXME
+    gen_server:cast(self(), Type),
+    {noreply, S#state{state=load}};
 
 %% Generic
 handle_cast(Msg, State) ->
@@ -133,26 +148,29 @@ handle_info({loading, eof}, State) ->
     {noreply, State};
 
 handle_info({tcp, Sock, Data}, S = #state{state=stream, mode=sync}) ->
-    inet:setopts(Sock, [{active,once}]),
     io:format("sync tcp stream: '~p' '~p'~n",[Data, S]),
+    inet:setopts(Sock, [{active,once}]),
     {noreply, S};
 
 handle_info({tcp, Sock, Data}, S = #state{state=stream, mode=psync}) ->
-    inet:setopts(Sock, [{active,once}]),
     io:format("psync tcp stream: '~p' '~p'~n",[Data, S]),
     NewOffset = (S#state.offset + byte_size(Data)),
+    inet:setopts(Sock, [{active,once}]),
     {noreply, S#state{offset=NewOffset}, ?REPL_TIMEOUT};
 
 %% Psync mode need to send offset data periodically
 %% in order to maintain the slavery active in socket.
 handle_info(timeout, S = #state{socket=Sock, offset=Offset, mode=psync, state=stream}) ->
-    io:format("REPLCONF ack '~p' ~n", [S]),
     repl_ack(Sock, Offset),
     {noreply, S, ?REPL_TIMEOUT};
 
-handle_info({tcp_closed, _Sock}, S) ->
+%% Tcp connection closed from master
+handle_info({tcp_closed, Sock}, S) ->
     io:format("tcp connection closed from master '~p' ~n", [S]),
-    {noreply, S};
+    gen_tcp:close(S#state.socket),
+    gen_tcp:close(Sock),
+    gen_server:cast(self(), new_connection),
+    {noreply, S#state{state=reconnect}};
 handle_info({tcp_error, _Sock, Reason}, S) ->
     io:format("tcp connection error from master '~p' ~n", [S]),
     {stop, Reason};
@@ -205,6 +223,15 @@ handle_sock(ok, S = #state{socket=Sock, state=eof}) ->
         {error, Reason} -> % BUG in here!!
             {stop, socket_err, {S, Reason}}
     end;
+
+handle_sock(ok, S = #state{socket=Sock, state=reconnect2}) ->
+    case recv_sock(Sock) of
+        {ok, _} ->
+            gen_server:cast(self(), bar),
+            {noreply, S#state{state=reconnect3}};
+        {error, Reason} ->
+            {stop, socket_err, {S, Reason}}
+    end;
 %% Receive the payload from de synchronization command 'sync'
 handle_sock(ok, S = #state{socket=Sock, state=load, mode=sync}) ->
     io:format("getting payload sync ~n"),
@@ -223,7 +250,10 @@ handle_sock({error, Reason}, S) ->
 handle_sock(_,_) ->
     {stop, general, "general socket error"}.
 
-
+handle_recv({ok, continue, Data}, S) ->
+    self() ! {tcp, S#state.socket, Data},
+    gen_server:cast(self(), replication),
+    {noreply, S#state{state=stream}};
 handle_recv({ok, fullresync, RunId, Offset}, S) ->
     gen_server:cast(self(), psync),
     {noreply, S#state{state=payload, runid=RunId, offset=Offset}}; % Next state will be 'payload'
@@ -231,7 +261,9 @@ handle_recv({ok, load_stream, Bulk}, S) ->
     gen_server:cast(self(), {save_rdb, Bulk}),
     {noreply, S#state{state=payload}}; % Next state will be 'payload'
 handle_recv({error, Reason}, S) ->
-    {stop, socket_err, {S, Reason}}.
+    {stop, socket_err, {S, Reason}};
+handle_recv(_, _) ->
+    {stop, invalid_pmatch}.
 
 
 initial() ->
@@ -277,11 +309,14 @@ recv_sock(Sock) ->
     inet:setopts(Sock, [{active,once}]),
     receive
         % "-LOADING"
-        {tcp, Sock, <<"+OK", _/binary>>} ->
+        % "+CONTINUE"
+        {tcp, _Sock, <<"+OK", _/binary>>} ->
             {ok, psync};
         {tcp, Sock, <<"+PONG", _/binary>>} ->
             {ok, pong, Sock};
-        {tcp, Sock, <<"+FULLRESYNC", _, RunId:40/binary, _, Offset/binary>>} ->
+        {tcp, _Sock, <<"+CONTINUE", _, _, Data/binary>>} ->
+            {ok, continue, Data};
+        {tcp, _Sock, <<"+FULLRESYNC", _, RunId:40/binary, _, Offset/binary>>} ->
             {ok, fullresync, b2l(RunId), int_offset(Offset)};
         {tcp, _Sock, <<"-ERR Unrecognized REPLCONF", _/binary>>} ->
             {ok, sync};
@@ -318,6 +353,7 @@ rdb_load(_) ->
     {error, "invalid pid to load rdb"}.
 
 rdb_save(Data, _Mode) when is_binary(Data), is_integer(_Mode) ->
+    % rdb:save(Data, Mode,?RDB_FILE);
     rdb:save(Data, ?RDB_FILE);
 rdb_save(_, _) ->
     {error, "invalid rdb data"}.
@@ -341,12 +377,10 @@ repl_listen(Sock) ->
 
 repl_ack(Sock, Offset) when is_integer(Offset) ->
     % "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$%d\r\n%s\r\n"
-    LenOffset = byte_size(i2b(Offset)),
-    Data = [<<"*3">>, ?CRLF, <<"$8">>, ?CRLF, <<"REPLCONF">>, ?CRLF,
-            <<"$3">>, ?CRLF, <<"ACK">>,?CRLF, <<"$">>, i2b(LenOffset),
-            ?CRLF, i2b(Offset)],
-    %io:format("repl_ack -> '~p' ~n", [Data]),
-    send_pkg(Sock, Data).
+    OffSize = byte_size(i2b(Offset)), %% Offset size
+    Repl = [rlen(3), ?CRLF, rsize(8), ?CRLF, <<"REPLCONF">>, ?CRLF,
+            rsize(3),?CRLF, <<"ACK">>,?CRLF, rsize(OffSize), ?CRLF, i2b(Offset)],
+    send_pkg(Sock, Repl).
 
 sync(Sock) ->
     send_pkg(Sock, [<<"SYNC">>]).
@@ -364,6 +398,10 @@ do_auth(_) ->
 get_lport(Sock) ->
     {ok, Port} = inet:port(Sock),
     i2b(Port).
+
+%% Short func for 'integer_to_list'
+i2l(I) when is_integer(I) ->
+    integer_to_list(I).
 
 %% Short func for 'binary_to_list'
 b2l(B) when is_binary(B) ->
@@ -383,3 +421,24 @@ int_offset(B) when is_binary(B) ->
     binary_to_integer(B2);
 int_offset(_) ->
     throw("error in binary offset").
+
+%%
+%% Redis proto funcs
+%%
+
+%% Short func to redis proto size element.
+%% 1 -> <<"$1">>.
+rsize(N) when is_integer(N) ->
+    redis_int_to_bin(36, N);
+rsize(_) ->
+    error.
+%% Short func to redis proto length element.
+%% 1 -> <<"*1">>
+rlen(N) when is_integer(N) ->
+    redis_int_to_bin(42, N);
+rlen(_) ->
+    error.
+
+redis_int_to_bin(Char, N) ->
+    S = lists:flatten([Char, i2l(N)]),
+    l2b(S).
