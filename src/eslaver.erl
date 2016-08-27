@@ -15,6 +15,7 @@
 -define(RDB_FILE, "/tmp/dump3.rdb").
 -define(BS, <<" ">>). % Binary blank space
 -define(CRLF, <<"\r\n">>).
+-define(BUFFER, 1024). % Buffer size
 
 %% Heartbeat for psync repl
 -define(REPL_TIMEOUT, 1000).
@@ -81,15 +82,21 @@ handle_cast(sync, S = #state{socket=Sock, state=load}) ->
     io:format("sync ~n"),
     handle_sock(sync(Sock), S);
 
-%% First step of receiving payload when is psync.
+%% First step of receiving payload on psync state.
 handle_cast(psync, S = #state{state=payload}) ->
     io:format("psync payload ~n"),
     handle_sock(get_payload, S);
 
+%% Buffer
+handle_cast({save_rdb, Bulk, Mode}, S = #state{state=buffering}) ->
+    io:format("buffered data ~n"),
+    ok = rdb_save(Bulk, Mode),
+    handle_sock(get_buffered, S);
+
 %% RDB SAVE
-handle_cast({save_rdb, Bulk}, S = #state{state=payload}) ->
-    io:format("save_rdb data: ~p ~n", [Bulk]),
-    ok = rdb_save(Bulk, 0), % Fixme, rdb_save parse can be '{error, Reason}'
+handle_cast({save_rdb, Bulk, Mode}, S = #state{state=payload}) ->
+    io:format("save_rdb data ~n"),
+    ok = rdb_save(Bulk, Mode), % Fixme, rdb_save parse can be '{error, Reason}'
     gen_server:cast(self(), {load_rdb, self()}),
     {noreply, S};
 
@@ -245,6 +252,10 @@ handle_sock(get_payload, S = #state{socket=Sock, state=payload, mode=psync}) ->
     io:format("getting payload psync 2nd ~n"),
     handle_recv(recv_sock(Sock), S);
 
+handle_sock(get_buffered, S = #state{socket=Sock, state=buffering}) ->
+    io:format("getting payload buffer ~n"),
+    handle_recv(recv_sock(Sock), S);
+
 handle_sock({error, Reason}, S) ->
     {stop, socket_err, {S, Reason}};
 handle_sock(_,_) ->
@@ -256,10 +267,24 @@ handle_recv({ok, continue, Data}, S) ->
     {noreply, S#state{state=stream}};
 handle_recv({ok, fullresync, RunId, Offset}, S) ->
     gen_server:cast(self(), psync),
-    {noreply, S#state{state=payload, runid=RunId, offset=Offset}}; % Next state will be 'payload'
-handle_recv({ok, load_stream, Bulk}, S) ->
-    gen_server:cast(self(), {save_rdb, Bulk}),
-    {noreply, S#state{state=payload}}; % Next state will be 'payload'
+    {noreply, S#state{state=payload, runid=RunId, offset=Offset}};
+
+%% Handle load from streaming payload
+handle_recv({ok, load_stream, Bulk}, S = #state{state=payload}) ->
+    gen_server:cast(self(), {save_rdb, Bulk, 0}),
+    {noreply, S};
+handle_recv({ok, load_stream, Bulk}, S = #state{state=buffering}) ->
+    gen_server:cast(self(), {save_rdb, Bulk, 1}),
+    {noreply, S#state{state=payload}};
+
+%% Handle load from buffered payload
+handle_recv({ok, load_buffer, Bulk}, S = #state{state=payload}) ->
+    gen_server:cast(self(), {save_rdb, Bulk, 0}),
+    {noreply, S#state{state=buffering}};
+handle_recv({ok, load_buffer, Bulk}, S = #state{state=buffering}) ->
+    gen_server:cast(self(), {save_rdb, Bulk, 1}),
+    {noreply, S};
+
 handle_recv({error, Reason}, S) ->
     {stop, socket_err, {S, Reason}};
 handle_recv(_, _) ->
@@ -323,7 +348,12 @@ recv_sock(Sock) ->
         {tcp, _Sock, <<"-", Error/binary>>} ->
             {error, Error};
         {tcp, _Sock, <<Bulk/binary>>} ->
-            {ok, load_stream, Bulk};
+            case byte_size(Bulk) of
+                ?BUFFER ->
+                    {ok, load_buffer, Bulk};
+                _ ->
+                    {ok, load_stream, Bulk}
+            end;
         {tcp, _Sock, Data} ->
             io:format("invalid data received '~p' ~n", [Data]),
             {error, "invalid data received"};
@@ -345,16 +375,15 @@ connect(_, _) ->
     throw("invalid host or port to connect to").
 
 tcp_connect(Addr, Port) ->
-    gen_tcp:connect(Addr, Port, [binary, {active, false}]).
+    gen_tcp:connect(Addr, Port, [binary, {active, false}, {buffer, ?BUFFER}]).
 
 rdb_load(Pid) when is_pid(Pid) ->
     rdb:load(Pid, ?RDB_FILE);
 rdb_load(_) ->
     {error, "invalid pid to load rdb"}.
 
-rdb_save(Data, _Mode) when is_binary(Data), is_integer(_Mode) ->
-    % rdb:save(Data, Mode,?RDB_FILE);
-    rdb:save(Data, ?RDB_FILE);
+rdb_save(Data, Mode) when is_binary(Data), Mode >= 0, Mode =< 1 ->
+    rdb:save(Data, Mode, ?RDB_FILE);
 rdb_save(_, _) ->
     {error, "invalid rdb data"}.
 

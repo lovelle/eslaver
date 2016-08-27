@@ -172,7 +172,7 @@ int rdbLoad(Myerl *erl, char *filename) {
 
     rdbver = atoi(buf+5);
     if (rdbver < 1 || rdbver > REDIS_RDB_VERSION) {
-        sprintf(erl->error, "Can't handle RDB format version %d", rdbver);
+        erl->error = "Can't handle RDB format version";
         errno = EINVAL;
         return REDIS_ERR;
     }
@@ -724,36 +724,47 @@ int write_log(char *text) {
 /****************/
 static ERL_NIF_TERM save(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     char filename[128];
-    int i, usemark = 0;
+    int i, flag = -1, usemark = 0;
     char *file_mode = "w";
     ErlNifBinary bin;
     FILE *fp;
 
-    /* argv[0] -> Binary; argv[1] -> rdb_filename */
-    if(argc != 2) return enif_make_badarg(env);
+    /* argv[0] -> Binary; argv[1] -> Mode, argv[2] -> rdb_filename */
+    if(argc != 3) return enif_make_badarg(env);
 
     /* Arg must be binary */
     if (!enif_inspect_binary(env, argv[0], &bin))
         return mk_error(env, "invalid binary");
 
+    /* Writing mode flag must be an integer */
+    if (!enif_get_int(env, argv[1], &flag))
+        return mk_error(env, "invalid writing mode argument");
+
     /* Should get filename */
-    if (!enif_get_string(env, argv[1], filename, sizeof(filename), ERL_NIF_LATIN1))
+    if (!enif_get_string(env, argv[2], filename, sizeof(filename), ERL_NIF_LATIN1))
         return mk_error(env, "invalid filename arg");
 
     /* If internal flag is set to 1, means it has been
      * received large chunked data from tcp, so rdb file must
      * be written in appending mode instead of by default
-     * writting mode.
+     * writing mode.
      */
-    // if (flag == 1) file_mode = "a";
+    if (flag) file_mode = "a";
 
     if ((fp = fopen(filename, file_mode)) == NULL)
         return mk_error(env, "cannot create rdb file");
 
     /* Write received binary as rdb into file */
     for (i = 0; i < bin.size; i++) {
-        if (bin.data[i] == '\n' && !usemark) {usemark++; continue;}
-        if (!usemark) continue;
+
+        /* If flag is set to 0 means the first bulk data is
+         * needed to be removed at \n of stream protocol.
+         */
+        if (!flag) { // flag == 0
+            if (bin.data[i] == '\n' && !usemark) {usemark++; continue;}
+            if (!usemark) continue;
+        }
+
         fwrite(&bin.data[i], sizeof(bin.data[i]), 1, fp);
     }
     fclose(fp);
@@ -819,7 +830,7 @@ static ERL_NIF_TERM load(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
 
 static ErlNifFunc nif_funcs[] = {
     {"load", 2, load},
-    {"save", 2, save}
+    {"save", 3, save}
 };
 
 

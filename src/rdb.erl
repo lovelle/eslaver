@@ -2,7 +2,7 @@
 -on_load(init/0).
 
 -export([
-    save/2,
+    save/3,
     load/2
 ]).
 
@@ -25,7 +25,7 @@ init() ->
 load(_Pid, _File) ->
     not_loaded(?LINE).
 
-save(_Data, _File) ->
+save(_Data, _Mode, _File) ->
     not_loaded(?LINE).
 
 not_loaded(Line) ->
