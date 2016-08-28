@@ -3,6 +3,7 @@ fix rio.c -> utils.h
 -------
 - change data type from native c code and do the "string" conversion in erlang code.
 - load rdb file (if exist) and up server (with looped warning msg) even if we cannot connect to master node.
-- handle big binary received from tcp. BUG : actual logic creat malformed rdb file.
+[DONE] handle big binary received from tcp. BUG : actual logic creat malformed rdb file.
 [DONE] for psync send contunously current offset e.g = <<"*3$8REPLCONF$3ACK$3379">>
 - add docker support.
+- update to rebar3
