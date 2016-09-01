@@ -1,18 +1,24 @@
 {application, eslaver,
- [{vsn, "1.0.0"},
-  {description, "Erlang slave redis replication client/server"},
-  {applications, [stdlib, kernel]},
-  {modules, [eslaver]},
+ [{description, "Erlang slave redis replication client/server"},
+  {vsn, "0.1.0"},
   {registered, [eslaver, eslaver_sup, eslaver_server]},
-  {mod, {eslaver, []}},
-  {env, [
+  {mod, { eslaver, []}},
+  {applications,
+   [kernel,
+    stdlib
+   ]},
+  {env,[
     {master, [
         {node, "nodeA"},
         {host, "127.0.0.1"},
         {port, 6379}
     ]},
-    {dbfilename, "/tmp/master/dump.rdb"},
+    {dbfilename, "/tmp/dump_erl.rdb"},
     {rdbcompression, yes},
     {rdbchecksum, yes}
-  ]}
+  ]},
+  {modules, [eslaver]},
+  {maintainers, []},
+  {licenses, []},
+  {links, []}
  ]}.
