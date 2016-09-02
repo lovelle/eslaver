@@ -1,4 +1,4 @@
--module(eslaver).
+-module(eslaver_server).
 -behaviour(gen_server).
 
 % API calls
@@ -12,7 +12,13 @@
          terminate/2,
          code_change/3]).
 
--define(RDB_FILE, "/tmp/dump3.rdb").
+-define(APP, eslaver).
+
+%% Default settings.
+-define(DEFAULT_RDB_FILE, "/tmp/dump_erl.rdb").
+-define(DEFAULT_MASTER_HOST, "127.0.0.1").
+-define(DEFAULT_MASTER_PORT, 6379).
+
 -define(BS, <<" ">>). % Binary blank space
 -define(CRLF, <<"\r\n">>).
 -define(BUFFER, 1024). % Buffer size
@@ -292,10 +298,15 @@ handle_recv(_, _) ->
 
 
 initial() ->
-    Addr = {127,0,0,1},
-    Port = 6379,
-    Pass = undef,
-    Sock = connect(Addr, Port),
+    Addr = config(master_host, ?DEFAULT_MASTER_HOST),
+    Port = config(master_port, ?DEFAULT_MASTER_PORT),
+    Pass = config(master_auth, undef),
+    Sock = case inet_parse:address(Addr) of
+        {ok, Host} ->
+            connect(Host, Port);
+        {error, Error} ->
+            Error
+    end,
 
     case do_auth(Pass) of
         true -> send_auth(Sock, Pass);
@@ -378,12 +389,14 @@ tcp_connect(Addr, Port) ->
     gen_tcp:connect(Addr, Port, [binary, {active, false}, {buffer, ?BUFFER}]).
 
 rdb_load(Pid) when is_pid(Pid) ->
-    rdb:load(Pid, ?RDB_FILE);
+    RdbFile = config(dbfilename, ?DEFAULT_RDB_FILE),
+    rdb:load(Pid, RdbFile);
 rdb_load(_) ->
     {error, "invalid pid to load rdb"}.
 
 rdb_save(Data, Mode) when is_binary(Data), Mode >= 0, Mode =< 1 ->
-    rdb:save(Data, Mode, ?RDB_FILE);
+    RdbFile = config(dbfilename, ?DEFAULT_RDB_FILE),
+    rdb:save(Data, Mode, RdbFile);
 rdb_save(_, _) ->
     {error, "invalid rdb data"}.
 
@@ -450,6 +463,13 @@ int_offset(B) when is_binary(B) ->
     binary_to_integer(B2);
 int_offset(_) ->
     throw("error in binary offset").
+
+%% Get config
+config(Key, Default) ->
+    case application:get_env(?APP, Key) of
+        undefined -> Default;
+        {ok, Val} -> Val
+    end.
 
 %%
 %% Redis proto funcs
