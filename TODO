@@ -10,3 +10,5 @@ fix rio.c -> utils.h
 - add redis parse command
 - configuration handling
 - callback logic
+- update c code to support rdbversion > 6
+- proper server logging
