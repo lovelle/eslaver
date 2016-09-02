@@ -7,3 +7,6 @@ fix rio.c -> utils.h
 [DONE] for psync send contunously current offset e.g = <<"*3$8REPLCONF$3ACK$3379">>
 - add docker support.
 [DONE] update to rebar3
+- add redis parse command
+- configuration handling
+- callback logic

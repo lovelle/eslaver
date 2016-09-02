@@ -8,12 +8,10 @@
     stdlib
    ]},
   {env,[
-    {master, [
-        {node, "nodeA"},
-        {host, "127.0.0.1"},
-        {port, 6379}
-    ]},
-    {dbfilename, "/tmp/dump_erl.rdb"},
+    {master_host, "127.0.0.1"},
+    {master_port, 6379},
+    {master_auth, undef},
+    {dbfilename, "/tmp/dump_erlang.rdb"},
     {rdbcompression, yes},
     {rdbchecksum, yes}
   ]},
