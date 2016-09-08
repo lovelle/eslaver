@@ -204,16 +204,6 @@ terminate(Reason, State) ->
     gen_tcp:close(State#state.socket),
     io:format("Generic termination: '~p' '~p'~n",[Reason, State]).
 
-%
-% Steps to do:
-%
-% 1- Tcp client connection
-% 2- ping
-% 3- start slave phase
-%    3.1 - [repl]
-%    3.2 - [capa] check if servr is psync compat with capa eof
-%    3.3 - [sync|psync]
-
 
 %% Handle the receiving data in socket depending
 %% in which state is.
@@ -353,7 +343,7 @@ recv_sock(Sock) ->
         {tcp, _Sock, <<"+CONTINUE", _, _, Data/binary>>} ->
             {ok, continue, Data};
         {tcp, _Sock, <<"+FULLRESYNC", _, RunId:40/binary, _, Offset/binary>>} ->
-            {ok, fullresync, b2l(RunId), int_offset(Offset)};
+            {ok, fullresync, eslaver_utils:b2l(RunId), int_offset(Offset)};
         {tcp, _Sock, <<"-ERR Unrecognized REPLCONF", _/binary>>} ->
             {ok, sync};
         {tcp, _Sock, <<"-", Error/binary>>} ->
@@ -415,20 +405,22 @@ capa(Sock) ->
     send_pkg(Sock, [<<"REPLCONF capa eof">>]).
 
 repl_listen(Sock) ->
-    send_pkg(Sock, [<<"REPLCONF listening-port">>, ?BS, get_lport(Sock)]).
+    send_pkg(Sock, [<<"REPLCONF listening-port">>, ?BS, local_port(Sock)]).
 
 repl_ack(Sock, Offset) when is_integer(Offset) ->
     % "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$%d\r\n%s\r\n"
-    OffSize = byte_size(i2b(Offset)), %% Offset size
-    Repl = [rlen(3), ?CRLF, rsize(8), ?CRLF, <<"REPLCONF">>, ?CRLF,
-            rsize(3),?CRLF, <<"ACK">>,?CRLF, rsize(OffSize), ?CRLF, i2b(Offset)],
+    OffSize = byte_size(eslaver_utils:i2b(Offset)), %% Offset size
+    BOffset = eslaver_utils:i2b(Offset),
+    Repl = [redis:rlen(3), ?CRLF, redis:rsize(8), ?CRLF, <<"REPLCONF">>, ?CRLF,
+            redis:rsize(3),?CRLF, <<"ACK">>,?CRLF, redis:rsize(OffSize), ?CRLF, BOffset],
     send_pkg(Sock, Repl).
 
 sync(Sock) ->
     send_pkg(Sock, [<<"SYNC">>]).
 
 psync(Sock, RunId, Offset) ->
-    send_pkg(Sock, [<<"PSYNC">>, ?BS, l2b(RunId), ?BS, i2b(Offset)]).
+    send_pkg(Sock, [<<"PSYNC">>, ?BS, eslaver_utils:l2b(RunId),
+                    ?BS, eslaver_utils:i2b(Offset)]).
 
 % Authentication is needed ?.
 do_auth(Pass) when length(Pass) > 1 ->
@@ -437,25 +429,9 @@ do_auth(_) ->
     false.
 
 %% Get client listen port in binary format
-get_lport(Sock) ->
+local_port(Sock) ->
     {ok, Port} = inet:port(Sock),
-    i2b(Port).
-
-%% Short func for 'integer_to_list'
-i2l(I) when is_integer(I) ->
-    integer_to_list(I).
-
-%% Short func for 'binary_to_list'
-b2l(B) when is_binary(B) ->
-    binary_to_list(B).
-
-%% Short func for 'list_to_binary'
-l2b(L) when is_list(L) ->
-    list_to_binary(L).
-
-%% Short func for 'integer_to_binary'
-i2b(I) when is_integer(I) ->
-    list_to_binary(integer_to_list(I)).
+    eslaver_utils:i2b(Port).
 
 %% Convert -> <<"666\r\n">> to normal integer
 int_offset(B) when is_binary(B) ->
@@ -470,24 +446,3 @@ config(Key, Default) ->
         undefined -> Default;
         {ok, Val} -> Val
     end.
-
-%%
-%% Redis proto funcs
-%%
-
-%% Short func to redis proto size element.
-%% 1 -> <<"$1">>.
-rsize(N) when is_integer(N) ->
-    redis_int_to_bin(36, N);
-rsize(_) ->
-    error.
-%% Short func to redis proto length element.
-%% 1 -> <<"*1">>
-rlen(N) when is_integer(N) ->
-    redis_int_to_bin(42, N);
-rlen(_) ->
-    error.
-
-redis_int_to_bin(Char, N) ->
-    S = lists:flatten([Char, i2l(N)]),
-    l2b(S).
