@@ -15,4 +15,5 @@ erl_crash.dump
 logs
 _build
 .idea
+compile_commands.json
 priv/rdb.so
