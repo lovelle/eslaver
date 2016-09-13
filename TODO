@@ -7,11 +7,11 @@ fix rio.c -> utils.h
 [DONE] for psync send contunously current offset e.g = <<"*3$8REPLCONF$3ACK$3379">>
 - add docker support.
 [DONE] update to rebar3
-[WIP] add redis parse commands
-[WIP] refactor for utils and redis parse commands logic
-[WIP] configuration handling
-- (Bug) wait to parse redis command when received payload size(Data) =:= ?BUFFER
-- callback logic
+[DONE] add redis parse commands
+[DONE] refactor for utils and redis parse commands logic
+[DONE] configuration handling
+[WIP] (Bug) wait to parse redis command when received payload size(Data) =:= ?BUFFER
+[WIP] callback logic, supporting function, pid and something else?
 - update c code to support rdbversion > 6
 - proper server logging
 - Unit tests!!!
