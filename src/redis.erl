@@ -1,8 +1,10 @@
 -module(redis).
 
--define(CRLF, "\r\n").
-
 -export([rsize/1, rlen/1, parse/1]).
+
+-define(NL, "\n"). % Shortcut for new line
+-define(TB, "\r"). % Shortcut for tabulation
+-define(CRLF, "\r\n").
 
 
 %%
@@ -36,10 +38,13 @@ parse(_) ->
 
 parse_multibulk(<<>>, Acc) ->
     {ok, <<>>, Acc};
+parse_multibulk(<<?NL, Rest/binary>>, Acc) ->
+    parse_multibulk(Rest, Acc);
+parse_multibulk(<<?TB, Rest/binary>>, Acc) ->
+    parse_multibulk(Rest, Acc);
 parse_multibulk(<<"*", Rest/binary>>, Acc) ->
     handle_bulk(multi, Acc, parse_head(Rest, <<>>));
-parse_multibulk(A,B) ->
-    io:format("A -> ~p B -> ~p ~n", [A,B]),
+parse_multibulk(_, _) ->
     {error, protocol_mismatch}.
 
 
@@ -49,19 +54,19 @@ parse_bulk(<<Rest/binary>>, 0, Acc) ->
     Lst = lists:reverse(Acc),
     Cmd = eslaver_utils:b2l(hd(Lst)),
     Key = string:to_lower(Cmd),
-    {ok, bulk, {cmd, Key, tl(Lst)}, Rest};
+    {ok, bulk, {stream, Key, tl(Lst)}, Rest};
 parse_bulk(_, _, _) ->
     {error, protocol_mismatch}.
 
 
 handle_bulk(multi, Acc, {ok, head, CmdLen, Command}) ->
-    Size = eslaver_utils:b2i(CmdLen),
-    bulk(multi, {Acc}, parse_bulk(Command, Size, []));
+    IntSize = eslaver_utils:b2i(CmdLen),
+    bulk(multi, {Acc}, parse_bulk(Command, IntSize, []));
 handle_bulk(short, {Acc, CmdLen}, {ok, head, CmdSize, Command}) ->
-    Size = eslaver_utils:b2i(CmdSize),
-    bulk(short, {Acc, CmdLen}, parse_str(Command, Size));
+    IntSize = eslaver_utils:b2i(CmdSize),
+    bulk(short, {Acc, CmdLen}, parse_command(Command, IntSize));
 handle_bulk(_, _, {error, Reason}) ->
-    {error, Reason} .
+    {error, Reason}.
 
 
 bulk(multi, {Acc}, {ok, bulk, X, <<>>}) ->
@@ -82,13 +87,8 @@ parse_head(<<>>, _) ->
     {error, empty_stream}.
 
 
-parse_str(Data, Size) when size(Data) > Size ->
-    case Data of
-        <<Cmd:Size/binary, ?CRLF, Rest/binary>> ->
-            {ok, parse, Cmd, Rest};
-        _ ->
-            {error, invalid_input}
-    end;
-parse_str(A,B) ->
-    io:format("A -> ~p B -> ~p ~n", [A, B]),
+parse_command(Cmd, IntSize) when size(Cmd) > IntSize ->
+    <<Command:IntSize/binary, ?CRLF, Rest/binary>> = Cmd,
+    {ok, parse, Command, Rest};
+parse_command(_, _) ->
     {error, invalid_input}.
