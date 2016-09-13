@@ -10,6 +10,7 @@ fix rio.c -> utils.h
 [WIP] add redis parse commands
 [WIP] refactor for utils and redis parse commands logic
 [WIP] configuration handling
+- (Bug) wait to parse redis command when received payload size(Data) =:= ?BUFFER
 - callback logic
 - update c code to support rdbversion > 6
 - proper server logging
