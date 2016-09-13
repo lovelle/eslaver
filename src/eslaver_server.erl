@@ -167,7 +167,11 @@ handle_info({tcp, Sock, Data}, S = #state{state=stream, mode=sync}) ->
 
 handle_info({tcp, Sock, Data}, S = #state{state=stream, mode=psync}) ->
     io:format("psync tcp stream: '~p' '~p'~n",[Data, S]),
-    NewOffset = (S#state.offset + byte_size(Data)),
+    DataSize = byte_size(Data),
+    NewOffset = (S#state.offset + DataSize),
+    Cb = fun(Z) -> io:format("~s -> ~p~n", [?APP, Z]) end,
+    {ok, Cmds} = redis:parse(Data),
+    foo(Cb, Cmds),
     inet:setopts(Sock, [{active,once}]),
     {noreply, S#state{offset=NewOffset}, ?REPL_TIMEOUT};
 
@@ -446,3 +450,6 @@ config(Key, Default) ->
         undefined -> Default;
         {ok, Val} -> Val
     end.
+
+foo(Cb, Data) ->
+    [apply(Cb, [X]) || X <- Data].
