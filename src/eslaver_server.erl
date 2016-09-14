@@ -2,7 +2,7 @@
 -behaviour(gen_server).
 
 % API calls
--export([start/0, stop/0]).
+-export([start/0, start/1, stop/0]).
 
 % gen_server callbacks
 -export([init/1,
@@ -31,15 +31,17 @@
                 mode,
                 state,
                 socket,
-                monitor,
-                from}).
+                callback}).
 
 
 %%====================================================================
 %% API calls
 %%====================================================================
 start() ->
-    gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
+    start([]).
+
+start(Callback) ->
+    gen_server:start_link({global, ?MODULE}, ?MODULE, [Callback], []).
 
 stop() ->
     gen_server:call({global, ?MODULE}, shutdown).
@@ -47,12 +49,13 @@ stop() ->
 %%====================================================================
 %% gen_server callbacks
 %%====================================================================
-init([]) ->
+init([Callback]) ->
     process_flag(trap_exit, true),
+    {ok, Cb} = eslaver_utils:get_callback(Callback),
     try initial() of
         {ok, pong, Sock} ->
             gen_server:cast(self(), repl),
-            {ok, #state{socket=Sock, state=list}};
+            {ok, #state{socket=Sock, state=list, callback=Cb}};
         {error, timeout} ->
             % io:format("timeout"),
             {stop, timeout};
@@ -169,9 +172,8 @@ handle_info({tcp, Sock, Data}, S = #state{state=stream, mode=psync}) ->
     io:format("psync tcp stream: '~p' '~p'~n",[Data, S]),
     DataSize = byte_size(Data),
     NewOffset = (S#state.offset + DataSize),
-    Cb = fun(Z) -> io:format("~s -> ~p~n", [?APP, Z]) end,
     {ok, Cmds} = redis:parse(Data),
-    foo(Cb, Cmds),
+    eslaver_utils:callback(S#state.callback, Cmds),
     inet:setopts(Sock, [{active,once}]),
     {noreply, S#state{offset=NewOffset}, ?REPL_TIMEOUT};
 
@@ -450,6 +452,3 @@ config(Key, Default) ->
         undefined -> Default;
         {ok, Val} -> Val
     end.
-
-foo(Cb, Data) ->
-    [apply(Cb, [X]) || X <- Data].
