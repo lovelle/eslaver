@@ -57,10 +57,8 @@ init([Callback]) ->
             gen_server:cast(self(), repl),
             {ok, #state{socket=Sock, state=list, callback=Cb}};
         {error, timeout} ->
-            % io:format("timeout"),
             {stop, timeout};
         {error, Reason} ->
-            % io:format("Error -> '~p' ~n", [Reason]),
             {stop, Reason}
     catch
         Exception:Reason ->
@@ -118,25 +116,21 @@ handle_cast({load_rdb, Pid}, S = #state{state=payload}) ->
 
 %% Stream replication for sync mode
 handle_cast(replication, S = #state{socket=Sock, state=stream, mode=sync}) ->
-    io:format("sync receive stream ~n"),
     inet:setopts(Sock, [{active,once}]),
     {noreply, S};
 
 %% Stream replication for psync mode
 handle_cast(replication, S = #state{socket=Sock, state=stream, mode=psync}) ->
-    io:format("psync receive stream ~n"),
     inet:setopts(Sock, [{active,once}]),
     {noreply, S, ?REPL_TIMEOUT};
 
 %% Reconnect to master server
 handle_cast(new_connection, S = #state{state=reconnect}) ->
-    %% BUG! Warning if master server is not able to receive connections
+    %% BUG! Take care if master is not able to receive connections
     {ok, pong, NewSock} = initial(), % FIXME !
     gen_server:cast(self(), repl),
     {noreply, S#state{socket=NewSock, state=reconnect2}};
 handle_cast(repl, S = #state{socket=Sock, state=reconnect2}) ->
-    % os:cmd("redis-cli set foo foo"),
-    % os:cmd("redis-cli set bar bar"),
     % timer:sleep(20000),
     handle_sock(repl_listen(Sock), S);
 handle_cast(bar, S = #state{mode=Type, state=reconnect3}) -> % FIXME
@@ -156,23 +150,23 @@ handle_call(Msg, _From, State) ->
     io:format("Generic cast: '~p' while in '~p'~n",[Msg, State]),
     {noreply, State}.
 
-%handle_info({loading, list, <<Key/binary>>, [FirstElem|_]}, State) ->
-%    io:format("key '~s' -> elem '~p' ~n", [Key, FirstElem]),
-%    {noreply, State};
-handle_info({loading, eof}, State) ->
-    io:format("rdb synchronization completed ~n"),
-    {noreply, State};
+handle_info({loading, eof}, S) ->
+    eslaver_utils:callback(S#state.callback, [{loading, eof}]),
+    {noreply, S};
+handle_info({loading, T, K, V}, S) -> % Type, Key, Value
+    eslaver_utils:callback(S#state.callback, [{loading, T, K, V}]),
+    {noreply, S};
 
 handle_info({tcp, Sock, Data}, S = #state{state=stream, mode=sync}) ->
-    io:format("sync tcp stream: '~p' '~p'~n",[Data, S]),
+    {ok, Cmds} = redis:parse(Data),
+    eslaver_utils:callback(S#state.callback, Cmds),
     inet:setopts(Sock, [{active,once}]),
     {noreply, S};
 
 handle_info({tcp, Sock, Data}, S = #state{state=stream, mode=psync}) ->
-    io:format("psync tcp stream: '~p' '~p'~n",[Data, S]),
     DataSize = byte_size(Data),
     NewOffset = (S#state.offset + DataSize),
-    {ok, Cmds} = redis:parse(Data),
+    {ok, Cmds} = redis:parse(Data), % FIXME?
     eslaver_utils:callback(S#state.callback, Cmds),
     inet:setopts(Sock, [{active,once}]),
     {noreply, S#state{offset=NewOffset}, ?REPL_TIMEOUT};
@@ -271,7 +265,15 @@ handle_recv({ok, fullresync, RunId, Offset}, S) ->
     gen_server:cast(self(), psync),
     {noreply, S#state{state=payload, runid=RunId, offset=Offset}};
 
+%%
 %% Handle load from streaming payload
+%%
+
+%% Sync load mode
+handle_recv({ok, load_stream, Bulk}, S = #state{state=load}) ->
+    gen_server:cast(self(), {save_rdb, Bulk, 0}),
+    {noreply, S#state{state=payload}};
+%% Psync load mode
 handle_recv({ok, load_stream, Bulk}, S = #state{state=payload}) ->
     gen_server:cast(self(), {save_rdb, Bulk, 0}),
     {noreply, S};
@@ -279,7 +281,15 @@ handle_recv({ok, load_stream, Bulk}, S = #state{state=buffering}) ->
     gen_server:cast(self(), {save_rdb, Bulk, 1}),
     {noreply, S#state{state=payload}};
 
+%%
 %% Handle load from buffered payload
+%%
+
+%% Sync buffer mode
+handle_recv({ok, load_buffer, Bulk}, S = #state{state=load}) ->
+    gen_server:cast(self(), {save_rdb, Bulk, 0}),
+    {noreply, S#state{state=buffering}};
+%% Psync buffer mode
 handle_recv({ok, load_buffer, Bulk}, S = #state{state=payload}) ->
     gen_server:cast(self(), {save_rdb, Bulk, 0}),
     {noreply, S#state{state=buffering}};
