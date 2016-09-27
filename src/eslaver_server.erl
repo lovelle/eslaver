@@ -21,8 +21,8 @@
 
 -define(BS, <<" ">>). % Binary blank space
 -define(CRLF, <<"\r\n">>).
--define(BUFF_SIZE, 1024). % Default buffer size
--define(BUFF_UNDEF, <<"">>).
+-define(BUFFER, 1024). % Default buffer size
+-define(EMPTY, <<>>).
 
 %% Heartbeat for psync repl
 -define(REPL_TIMEOUT, 1000).
@@ -32,7 +32,7 @@
                 mode,
                 state,
                 socket,
-                buffer=?BUFF_UNDEF,
+                buffer=?EMPTY,
                 callback}).
 
 
@@ -160,25 +160,24 @@ handle_info({loading, T, K, V}, S) -> % Type, Key, Value
     {noreply, S};
 
 handle_info({tcp, Sock, Data}, S = #state{state=stream, mode=sync, buffer=Buffer}) ->
-    DataSize = byte_size(Data),
-    case buffer(DataSize, Data, Buffer) of
+    case buffer(byte_size(Data), Data, Buffer) of
         {ok, NewBuffer} ->
             ok;
-        {ok, NewBuffer, Commands} ->
+        {ok, NewBuffer, Commands, _} ->
             eslaver_utils:callback(S#state.callback, Commands)
     end,
     inet:setopts(Sock, [{active,once}]),
     {noreply, S#state{buffer=NewBuffer}};
 
 handle_info({tcp, Sock, Data}, S = #state{state=stream, mode=psync, buffer=Buffer}) ->
-    DataSize = byte_size(Data),
-    NewOffset = (S#state.offset + DataSize),
-    case buffer(DataSize, Data, Buffer) of
+    NewOffset = case buffer(byte_size(Data), Data, Buffer) of
         {ok, NewBuffer} ->
-            ok;
-        {ok, NewBuffer, Commands} ->
-            eslaver_utils:callback(S#state.callback, Commands)
+            S#state.offset;
+        {ok, NewBuffer, Commands, OffsetSize} ->
+            eslaver_utils:callback(S#state.callback, Commands),
+            (S#state.offset + OffsetSize)
     end,
+    %repl_ack(Sock, NewOffset), % still don't know if putting this here is a good idea
     inet:setopts(Sock, [{active,once}]),
     {noreply, S#state{offset=NewOffset, buffer=NewBuffer}, ?REPL_TIMEOUT};
 
@@ -377,7 +376,7 @@ recv_sock(Sock) ->
             {error, Error};
         {tcp, _Sock, <<Bulk/binary>>} ->
             case byte_size(Bulk) of
-                ?BUFF_SIZE ->
+                ?BUFFER ->
                     {ok, load_buffer, Bulk};
                 _ ->
                     {ok, load_stream, Bulk}
@@ -403,7 +402,7 @@ connect(_, _) ->
     throw("invalid host or port to connect to").
 
 tcp_connect(Addr, Port) ->
-    gen_tcp:connect(Addr, Port, [binary, {active, false}, {buffer, ?BUFF_SIZE}]).
+    gen_tcp:connect(Addr, Port, [binary, {active, false}, {buffer, ?BUFFER}]).
 
 rdb_load(Pid) when is_pid(Pid) ->
     RdbFile = config(dbfilename, ?DEFAULT_RDB_FILE),
@@ -474,14 +473,19 @@ config(Key, Default) ->
         {ok, Val} -> Val
     end.
 
-buffer(?BUFF_SIZE, Data, Buffer) ->
+buffer(0, ?EMPTY, ?EMPTY) ->
+    {ok, ?EMPTY};
+buffer(1, <<"\n">>, ?EMPTY) ->
+    {ok, ?EMPTY};
+buffer(?BUFFER, Data, Buffer) ->
     {ok, bufferize(Data, Buffer)};
-buffer(_, Data, Buffer) ->
+buffer(A, Data, Buffer) ->
+    io:format("mira -> ~p ~p ~p ~n",[A, Data, Buffer]),
     NewData = <<Buffer/binary, Data/binary>>,
-    {ok, Commands} = redis:parse(NewData), % FIXME?
-    {ok, ?BUFF_UNDEF, Commands}.
+    {ok, Commands} = redis:parse(NewData), % FIXME
+    {ok, ?EMPTY, Commands, byte_size(NewData)}.
 
-bufferize(Data, ?BUFF_UNDEF) ->
+bufferize(Data, ?EMPTY) ->
     Data;
 bufferize(Data, Buffer) ->
     <<Buffer/binary, Data/binary>>.
