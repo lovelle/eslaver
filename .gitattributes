@@ -1,7 +1,18 @@
 c_src/ziplist.c linguist-vendored
+c_src/ziplist.h linguist-vendored
 c_src/sds.c linguist-vendored
+c_src/sds.h linguist-vendored
 c_src/rio.c linguist-vendored
+c_src/rio.h linguist-vendored
 c_src/util.c linguist-vendored
+c_src/util.h linguist-vendored
 c_src/dict.c linguist-vendored
+c_src/dict.h linguist-vendored
+c_src/lzf.h linguist-vendored
+c_src/lzfP.h linguist-vendored
 c_src/lzf_c.c linguist-vendored
 c_src/lzf_d.c linguist-vendored
+c_src/endianconv.h linguist-vendored
+
+c_src/rdb.c linguist-vendored
+c_src/rdb.h linguist-vendored
