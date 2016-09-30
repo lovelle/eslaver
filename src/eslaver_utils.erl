@@ -55,7 +55,11 @@ get_callback([]) ->
     {ok, F};
 get_callback(Pid) when is_pid(Pid) ->
     [State|_] = [Status || {status, Status} <- process_info(Pid)],
-    io:format("state -> ~p ~n", [State]),
-    {ok, Pid};
+    case State of
+        waiting ->
+            {ok, Pid};
+        _ ->
+            {error, invalid_pid_state}
+    end;
 get_callback(_) ->
     {error, invalid_callback}.

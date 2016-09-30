@@ -98,7 +98,7 @@ handle_cast(psync, S = #state{state=payload}) ->
 
 %% Buffer
 handle_cast({save_rdb, Bulk, Mode}, S = #state{state=buffering}) ->
-    io:format("buffered data ~n"),
+    % io:format("buffered data ~n"),
     ok = rdb_save(Bulk, Mode),
     handle_sock(get_buffered, S);
 
@@ -111,7 +111,7 @@ handle_cast({save_rdb, Bulk, Mode}, S = #state{state=payload}) ->
 
 %% RDB LOAD
 handle_cast({load_rdb, Pid}, S = #state{state=payload}) ->
-    io:format("load_rdb data: ~p ~n", [Pid]),
+    io:format("load_rdb from ~p ~n", [Pid]),
     ok = rdb_load(Pid), % Fixme, rdb_load parse can be '{error, Reason}'
     gen_server:cast(self(), replication), % Move this to eof handle_info
     {noreply, S#state{state=stream}};
@@ -133,9 +133,8 @@ handle_cast(new_connection, S = #state{state=reconnect}) ->
     gen_server:cast(self(), repl),
     {noreply, S#state{socket=NewSock, state=reconnect2}};
 handle_cast(repl, S = #state{socket=Sock, state=reconnect2}) ->
-    % timer:sleep(20000),
     handle_sock(repl_listen(Sock), S);
-handle_cast(bar, S = #state{mode=Type, state=reconnect3}) -> % FIXME
+handle_cast(rst, S = #state{mode=Type, state=reconnect3}) -> % FIXME
     gen_server:cast(self(), Type),
     {noreply, S#state{state=load}};
 
@@ -240,7 +239,7 @@ handle_sock(ok, S = #state{socket=Sock, state=eof}) ->
 handle_sock(ok, S = #state{socket=Sock, state=reconnect2}) ->
     case recv_sock(Sock) of
         {ok, _} ->
-            gen_server:cast(self(), bar),
+            gen_server:cast(self(), rst),
             {noreply, S#state{state=reconnect3}};
         {error, Reason} ->
             {stop, socket_err, {S, Reason}}
@@ -259,7 +258,7 @@ handle_sock(get_payload, S = #state{socket=Sock, state=payload, mode=psync}) ->
     handle_recv(recv_sock(Sock), S);
 
 handle_sock(get_buffered, S = #state{socket=Sock, state=buffering}) ->
-    io:format("getting payload buffer ~n"),
+    % io:format("getting payload buffer ~n"),
     handle_recv(recv_sock(Sock), S);
 
 handle_sock({error, Reason}, S) ->
@@ -360,8 +359,7 @@ send_auth(Sock, Pass) ->
 recv_sock(Sock) ->
     inet:setopts(Sock, [{active,once}]),
     receive
-        % "-LOADING"
-        % "+CONTINUE"
+        % "-LOADING" ???
         {tcp, _Sock, <<"+OK", _/binary>>} ->
             {ok, psync};
         {tcp, Sock, <<"+PONG", _/binary>>} ->
@@ -434,8 +432,7 @@ repl_listen(Sock) ->
     send_pkg(Sock, [<<"REPLCONF listening-port">>, ?BS, local_port(Sock)]).
 
 repl_ack(Sock, Offset) when is_integer(Offset) ->
-    % "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$%d\r\n%s\r\n"
-    OffSize = byte_size(eslaver_utils:i2b(Offset)), %% Offset size
+    OffSize = byte_size(eslaver_utils:i2b(Offset)), % Offset size
     BOffset = eslaver_utils:i2b(Offset),
     Repl = [redis:rlen(3), ?CRLF, redis:rsize(8), ?CRLF, <<"REPLCONF">>, ?CRLF,
             redis:rsize(3),?CRLF, <<"ACK">>,?CRLF, redis:rsize(OffSize), ?CRLF, BOffset],
@@ -448,7 +445,7 @@ psync(Sock, RunId, Offset) ->
     send_pkg(Sock, [<<"PSYNC">>, ?BS, eslaver_utils:l2b(RunId),
                     ?BS, eslaver_utils:i2b(Offset)]).
 
-% Authentication is needed ?.
+% Authentication is needed?.
 do_auth(Pass) when length(Pass) > 1 ->
     true;
 do_auth(_) ->
@@ -479,8 +476,7 @@ buffer(1, <<"\n">>, ?EMPTY) ->
     {ok, ?EMPTY};
 buffer(?BUFFER, Data, Buffer) ->
     {ok, bufferize(Data, Buffer)};
-buffer(A, Data, Buffer) ->
-    io:format("mira -> ~p ~p ~p ~n",[A, Data, Buffer]),
+buffer(_, Data, Buffer) ->
     NewData = <<Buffer/binary, Data/binary>>,
     {ok, Commands} = redis:parse(NewData), % FIXME
     {ok, ?EMPTY, Commands, byte_size(NewData)}.
