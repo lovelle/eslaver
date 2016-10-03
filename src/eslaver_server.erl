@@ -54,18 +54,8 @@ stop() ->
 init([Callback]) ->
     process_flag(trap_exit, true),
     {ok, Cb} = eslaver_utils:get_callback(Callback),
-    try initial() of
-        {ok, pong, Sock} ->
-            gen_server:cast(self(), repl),
-            {ok, #state{socket=Sock, state=list, callback=Cb}};
-        {error, timeout} ->
-            {stop, timeout};
-        {error, Reason} ->
-            {stop, Reason}
-    catch
-        Exception:Reason ->
-            {stop, {Exception, Reason}}
-    end.
+    initiate(Cb).
+
 
 %% REPLCONF listening-port.
 %% The initial step, send the repl with our
@@ -311,6 +301,24 @@ handle_recv({error, Reason}, S) ->
 handle_recv(_, _) ->
     {stop, invalid_pmatch}.
 
+initiate(Cb) ->
+    try initial() of
+        {ok, pong, Sock} ->
+            gen_server:cast(self(), repl),
+            {ok, #state{socket=Sock, state=list, callback=Cb}};
+        {ok, loading, Msg} ->
+            io:format("~s", [Msg]), % Warning
+            io:format("sleeping for 1s...~n"),
+            timer:sleep(1000),
+            initiate(Cb);
+        {error, timeout} ->
+            {stop, timeout};
+        {error, Reason} ->
+            {stop, Reason}
+    catch
+        Exception:Reason ->
+            {stop, {Exception, Reason}}
+    end.
 
 initial() ->
     Addr = config(master_host, ?DEFAULT_MASTER_HOST),
@@ -359,13 +367,14 @@ send_auth(Sock, Pass) ->
 recv_sock(Sock) ->
     inet:setopts(Sock, [{active,once}]),
     receive
-        % "-LOADING" ???
         {tcp, _Sock, <<"+OK", _/binary>>} ->
             {ok, psync};
         {tcp, Sock, <<"+PONG", _/binary>>} ->
             {ok, pong, Sock};
         {tcp, _Sock, <<"+CONTINUE", _, _, Data/binary>>} ->
             {ok, continue, Data};
+        {tcp, _Sock, <<"-LOADING", _, Msg/binary>>} ->
+            {ok, loading, Msg};
         {tcp, _Sock, <<"+FULLRESYNC", _, RunId:40/binary, _, Offset/binary>>} ->
             {ok, fullresync, eslaver_utils:b2l(RunId), int_offset(Offset)};
         {tcp, _Sock, <<"-ERR Unrecognized REPLCONF", _/binary>>} ->

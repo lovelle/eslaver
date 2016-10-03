@@ -9,7 +9,7 @@
 [DONE] configuration handling
 [DONE] (Bug) wait to parse redis command when received payload size(Data) =:= ?BUFFER
 [DONE] callback logic, supporting module, function, pid and something else?
-- handle "LOADING" status from master server
+[DONE] handle "LOADING" status from master server
 - update c code to support rdbversion > 6
 - handle 'zset' and 'set' type from rdb load process.
 - proper server logging
