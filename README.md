@@ -65,34 +65,38 @@ You can use 3 different types of callbacks:
 
 Startup with anonymous function (supervision activated).
 
-```sh
-$ ./rebar3 shell
+```erlang
 1> Cb = fun(X) -> io:format("my callback func -> ~p ~n") end.
+#Fun<erl_eval.6.50752066>
 2> eslaver:start(normal, Cb).
 ```
 
 Startup with module and function (supervision activated).
 
-```sh
-$ ./rebar3 shell
+```erlang
 1> eslaver:start(normal, {mymodule, mycallback}).
 ```
 
 Startup with pid as callback receiver (without supervision activated).
 
-```sh
-$ ./rebar3 shell
+```erlang
 1> eslaver_server:start(self()).
+...
 2> flush().
+Shell got {loading,eof}
+Shell got {stream,"ping",[]}
+ok
 ```
 
 Startup eslaver with custom redis master configuration.
 
-```sh
-$ ./rebar3 shell
+```erlang
 1> application:load(eslaver).
+ok
 2> application:set_env(eslaver, "master_host", "192.168.0.1").
+ok
 3> application:set_env(eslaver, "master_port", 6380).
+ok
 4> eslaver_server:start({mymodule, mycallback}).
 ```
 
