@@ -12,6 +12,7 @@
          terminate/2,
          code_change/3]).
 
+-include("eslaver_logger.hrl").
 -define(APP, eslaver).
 
 %% Default settings.
@@ -61,29 +62,29 @@ init([Callback]) ->
 %% The initial step, send the repl with our
 %% client tcp port over the socket.
 handle_cast(repl, S = #state{socket=Sock, state=list}) ->
-    io:format("repl ~n"),
+    ?INFO("repl", []),
     handle_sock(repl_listen(Sock), S);
 
 %% REPLCONF capa eof.
 %% Check wheter the server is able to do partial
 %% synchronization or just can handle whole sync.
 handle_cast(capa, S = #state{socket=Sock, state=eof}) ->
-    io:format("capa ~n"),
+    ?INFO("capa", []),
     handle_sock(capa(Sock), S);
 
 %% PSYNC.
 handle_cast(psync, S = #state{socket=Sock, state=load}) ->
-    io:format("psync ~n"),
+    ?INFO("psync", []),
     handle_sock(psync(Sock, S#state.runid, S#state.offset), S);
 
 %% SYNC.
 handle_cast(sync, S = #state{socket=Sock, state=load}) ->
-    io:format("sync ~n"),
+    ?INFO("sync", []),
     handle_sock(sync(Sock), S);
 
 %% First step of receiving payload on psync state.
 handle_cast(psync, S = #state{state=payload}) ->
-    io:format("psync payload ~n"),
+    ?INFO("psync payload", []),
     handle_sock(get_payload, S);
 
 %% Buffer
@@ -94,14 +95,14 @@ handle_cast({save_rdb, Bulk, Mode}, S = #state{state=buffering}) ->
 
 %% RDB SAVE
 handle_cast({save_rdb, Bulk, Mode}, S = #state{state=payload}) ->
-    io:format("save_rdb data ~n"),
+    ?INFO("save_rdb data", []),
     ok = rdb_save(Bulk, Mode), % Fixme, rdb_save parse can be '{error, Reason}'
     gen_server:cast(self(), {load_rdb, self()}),
     {noreply, S};
 
 %% RDB LOAD
 handle_cast({load_rdb, Pid}, S = #state{state=payload}) ->
-    io:format("load_rdb from ~p ~n", [Pid]),
+    ?INFO("load_rdb from ~p", [Pid]),
     ok = rdb_load(Pid), % Fixme, rdb_load parse can be '{error, Reason}'
     gen_server:cast(self(), replication), % Move this to eof handle_info
     {noreply, S#state{state=stream}};
@@ -130,15 +131,15 @@ handle_cast(rst, S = #state{mode=Type, state=reconnect3}) -> % FIXME
 
 %% Generic
 handle_cast(Msg, State) ->
-    io:format("Generic cast: '~p' while in '~p'~n",[Msg, State]),
+    ?INFO("Generic cast: '~p' while in '~p'",[Msg, State]),
     {noreply, State}.
 
 handle_call(shutdown, _From, State) ->
-    io:format("Generic call: *shutdown* while in '~p'~n",[State]),
+    ?INFO("Generic call: *shutdown* while in '~p'",[State]),
     {stop, normal, ok, State};
 %% Generic
 handle_call(Msg, _From, State) ->
-    io:format("Generic cast: '~p' while in '~p'~n",[Msg, State]),
+    ?INFO("Generic cast: '~p' while in '~p'",[Msg, State]),
     {noreply, State}.
 
 handle_info({loading, eof}, S) ->
@@ -178,17 +179,17 @@ handle_info(timeout, S = #state{socket=Sock, offset=Offset, mode=psync, state=st
 
 %% Tcp connection closed from master
 handle_info({tcp_closed, Sock}, S) ->
-    io:format("tcp connection closed from master '~p' ~n", [S]),
+    ?ERR("tcp connection closed from master '~p'", [S]),
     gen_tcp:close(S#state.socket),
     gen_tcp:close(Sock),
     gen_server:cast(self(), new_connection),
     {noreply, S#state{state=reconnect}};
 handle_info({tcp_error, _Sock, Reason}, S) ->
-    io:format("tcp connection error from master '~p' ~n", [S]),
+    ?WARN("tcp connection error from master '~p'", [S]),
     {stop, Reason};
 %% Generic
 handle_info(Msg, State) ->
-    io:format("Generic info: '~p' '~p'~n",[Msg, State]),
+    ?INFO("Generic info: '~p' '~p'",[Msg, State]),
     {noreply, State}.
 
 %% Code change
@@ -198,16 +199,16 @@ code_change(_OldVsn, State, _Extra) ->
 %% Server termination
 terminate(socket_err, {S, Reason}) ->
     gen_tcp:close(S#state.socket),
-    io:format("Error over socket ~p ~n", [Reason]);
+    ?WARN("Error over socket ~p", [Reason]);
 terminate(Reason, State) ->
     gen_tcp:close(State#state.socket),
-    io:format("Generic termination: '~p' '~p'~n",[Reason, State]).
+    ?INFO("Generic termination: '~p' '~p'",[Reason, State]).
 
 
 %% Handle the receiving data in socket depending
 %% in which state is.
 handle_sock(ok, S = #state{socket=Sock, state=list}) ->
-    io:format("doing list ~n"),
+    ?INFO("doing list", []),
     case recv_sock(Sock) of
         {ok, _} ->
             gen_server:cast(self(), capa),
@@ -217,7 +218,7 @@ handle_sock(ok, S = #state{socket=Sock, state=list}) ->
     end;
 %% Get type of synchronization
 handle_sock(ok, S = #state{socket=Sock, state=eof}) ->
-    io:format("doing eof ~n"),
+    ?INFO("doing eof", []),
     case recv_sock(Sock) of
         {ok, Type} ->
             gen_server:cast(self(), Type),
@@ -236,15 +237,15 @@ handle_sock(ok, S = #state{socket=Sock, state=reconnect2}) ->
     end;
 %% Receive the payload from de synchronization command 'sync'
 handle_sock(ok, S = #state{socket=Sock, state=load, mode=sync}) ->
-    io:format("getting payload sync ~n"),
+    ?INFO("getting payload sync", []),
     handle_recv(recv_sock(Sock), S);
 
 handle_sock(ok, S = #state{socket=Sock, state=load, mode=psync}) ->
-    io:format("getting payload psync 1st ~n"),
+    ?INFO("getting payload psync 1st", []),
     handle_recv(recv_sock(Sock), S);
 
 handle_sock(get_payload, S = #state{socket=Sock, state=payload, mode=psync}) ->
-    io:format("getting payload psync 2nd ~n"),
+    ?INFO("getting payload psync 2nd", []),
     handle_recv(recv_sock(Sock), S);
 
 handle_sock(get_buffered, S = #state{socket=Sock, state=buffering}) ->
@@ -307,8 +308,8 @@ initiate(Cb) ->
             gen_server:cast(self(), repl),
             {ok, #state{socket=Sock, state=list, callback=Cb}};
         {ok, loading, Msg} ->
-            io:format("~s", [Msg]), % Warning
-            io:format("sleeping for 1s...~n"),
+            ?WARN("~s", [Msg]), % Warning
+            ?INFO("sleeping for 1s...", []),
             timer:sleep(1000),
             initiate(Cb);
         {error, timeout} ->
@@ -389,10 +390,10 @@ recv_sock(Sock) ->
                     {ok, load_stream, Bulk}
             end;
         {tcp, _Sock, Data} ->
-            io:format("invalid data received '~p' ~n", [Data]),
+            ?ERR("invalid data received '~p'", [Data]),
             {error, "invalid data received"};
         {tcp_closed, Sock} ->
-            io:format("Socket ~w closed [~w]~n", [Sock ,self()]),
+            ?ERR("Socket ~w closed [~w]", [Sock ,self()]),
             {error, "Tcp socket was closed"};
         _ ->
             {error, "Generic error"}
