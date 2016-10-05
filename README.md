@@ -66,7 +66,7 @@ You can use 3 different types of callbacks:
 Startup with anonymous function (supervision activated).
 
 ```erlang
-1> Cb = fun(X) -> io:format("my callback func -> ~p ~n") end.
+1> Cb = fun(X) -> io:format("my callback func -> ~p ~n", [X]) end.
 #Fun<erl_eval.6.50752066>
 2> eslaver:start(normal, Cb).
 ```
