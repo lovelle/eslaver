@@ -1,6 +1,4 @@
 #include "erl_nif.h"
-//#include "erl_nif_compat.h"
-//#include "nif_util.h"
 
 #define SOURCE "loading"
 #define ESLAVER_OK    0

@@ -12,5 +12,5 @@
 [DONE] handle "LOADING" status from master server
 - update c code to support rdbversion > 6
 - handle 'zset' and 'set' type from rdb load process.
-- proper server logging
+[~DONE] proper server logging
 - Unit tests!!!

@@ -2,11 +2,12 @@
 #include <limits.h>
 #include <assert.h>
 #include <sys/time.h>
-#include "zmalloc.h"
 #include "rdb.h"
 #include "util.h"
-#include "extras.h"
+#include "eslaver_util.h"
+#include "zmalloc.h"
 #include "ziplist.h"
+
 
 /*** redis.c ***/
 /* Return the UNIX time in microseconds */
@@ -335,7 +336,6 @@ int sendListTuplePid(Myerl *erl, robj *key, robj *val) {
 }
 
 
-/*** custom ***/
 int retError(Myerl *erl, char *error) {
     erl->error = error;
     return ESLAVER_ERR;
@@ -456,5 +456,3 @@ int _sendPid(Myerl *erl, ERL_NIF_TERM data) {
     }
     return ESLAVER_OK;
 }
-/*** custom ***/
-
