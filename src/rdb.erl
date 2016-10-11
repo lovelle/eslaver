@@ -6,18 +6,21 @@
     load/2
 ]).
 
+-define(APPNAME, eslaver).
+-define(LIBNAME, rdb).
+
 
 init() ->
-    Bin = case code:priv_dir(?MODULE) of
+    Bin = case code:priv_dir(?APPNAME) of
         {error, bad_name} ->
             case filelib:is_dir(filename:join(["..", priv])) of
                 true ->
-                    filename:join(["..", priv, ?MODULE]);
+                    filename:join(["..", priv, ?LIBNAME]);
                 _ ->
-                    filename:join([priv, ?MODULE])
+                    filename:join([priv, ?LIBNAME])
             end;
         Dir ->
-            filename:join(Dir, ?MODULE)
+            filename:join(Dir, ?LIBNAME)
     end,
     erlang:load_nif(Bin, 0).
 
