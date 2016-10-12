@@ -119,10 +119,18 @@ handle_cast(replication, S = #state{socket=Sock, state=stream, mode=psync}) ->
 
 %% Reconnect to master server
 handle_cast(new_connection, S = #state{state=reconnect}) ->
-    %% BUG! Take care if master is not able to receive connections
-    {ok, pong, NewSock} = initial(), % FIXME !
-    gen_server:cast(self(), repl),
-    {noreply, S#state{socket=NewSock, state=reconnect2}};
+    {State, Sock} = try initial() of
+        {ok, pong, NewSock} ->
+            gen_server:cast(self(), repl),
+            {reconnect2, NewSock}
+    catch
+        throw:Reason ->
+            ?ERR("disconnected from master reason: ~p", [Reason]),
+            gen_server:cast(self(), new_connection),
+            timer:sleep(1000),
+            {reconnect, undef}
+    end,
+    {noreply, S#state{socket=Sock, state=State}};
 handle_cast(repl, S = #state{socket=Sock, state=reconnect2}) ->
     handle_sock(repl_listen(Sock), S);
 handle_cast(rst, S = #state{mode=Type, state=reconnect3}) -> % FIXME
@@ -309,7 +317,7 @@ initiate(Cb) ->
             {ok, #state{socket=Sock, state=list, callback=Cb}};
         {ok, loading, Msg} ->
             ?WARN("~s", [Msg]), % Warning
-            ?INFO("sleeping for 1s...", []),
+            ?DEBUG("sleeping for 1s...", []),
             timer:sleep(1000),
             initiate(Cb);
         {error, timeout} ->
