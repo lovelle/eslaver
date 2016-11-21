@@ -435,7 +435,7 @@ rdb_save(_, _) ->
 send_pkg(Sock, Pkt) when is_list(Pkt) ->
     gen_tcp:send(Sock, [Pkt] ++ ?CRLF);
 send_pkg(_, _) ->
-    throw("cannot send invalid tcp paquet").
+    throw("cannot send invalid tcp packet").
 
 ping(Sock) ->
     send_pkg(Sock, [<<"PING">>]).
